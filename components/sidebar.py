@@ -10,7 +10,7 @@ def create_sidebar():
     target_section = dmc.Stack(
         gap="xs",
         children=[
-            dmc.Text("1. Target Data (Y)", fw=700, size="sm", c="blue"),
+            dmc.Text("Upload File", fw=700, size="sm", c="blue"),
             
             # Upload Y (Replaces old 'article-upload')
             dcc.Upload(
@@ -35,8 +35,8 @@ def create_sidebar():
             # Select Sheet Y (Old 'article-sheet-select' logic, renamed)
             dmc.Select(
                 id="select-sheet-target",
-                label="Select Sheet",
-                placeholder="Choose sheet...",
+                label="Select Process(s)",
+                placeholder="Choose Process...",
                 data=[],
                 clearable=False,
                 disabled=True,
@@ -64,7 +64,7 @@ def create_sidebar():
         gap="xs",
         children=[
             dmc.Divider(style={"marginTop": "8px", "marginBottom": "8px"}),
-            dmc.Text("2. External Features (X)", fw=700, size="sm", c="orange"),
+            dmc.Text("Add External Features (X)", fw=700, size="sm", c="orange"),
             
             # Upload X
             dcc.Upload(
@@ -95,7 +95,7 @@ def create_sidebar():
         gap="xs",
         children=[
             dmc.Divider(style={"marginTop": "8px", "marginBottom": "8px"}),
-            dmc.Text("3. Configuration", fw=700, size="sm", c="gray"),
+            dmc.Text("Configuration", fw=700, size="sm", c="gray"),
             
             # Horizon Input (Moved into Stack)
             dmc.NumberInput(

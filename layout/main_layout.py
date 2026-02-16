@@ -130,8 +130,8 @@ def create_layout():
                                                                         value="tab-x",  # Default to X analysis
                                                                         children=[
                                                                             dmc.TabsList([
-                                                                                dmc.TabsTab("1. Features Analysis (X)", value="tab-x", leftSection=DashIconify(icon="carbon:data-1", width=16)),
-                                                                                dmc.TabsTab("2. Target Analysis (Y)", value="tab-y", leftSection=DashIconify(icon="carbon:chart-line-data", width=16)),
+                                                                                dmc.TabsTab("Features Analysis (X)", value="tab-x", leftSection=DashIconify(icon="carbon:data-1", width=16)),
+                                                                                dmc.TabsTab("Target Analysis (Y)", value="tab-y", leftSection=DashIconify(icon="carbon:chart-line-data", width=16)),
                                                                             ]),
 
                                                                             # ------------------------------------------------
@@ -147,13 +147,13 @@ def create_layout():
                                                                                         color="indigo",
                                                                                         children=[
                                                                                             dmc.TabsList([
-                                                                                                dmc.TabsTab("Health Summary", value="x-health", leftSection=DashIconify(icon="carbon:report-data", width=16)),
-                                                                                                dmc.TabsTab("Collinearity (Heatmap)", value="x-collinear", leftSection=DashIconify(icon="carbon:heat-map", width=16)),
-                                                                                                dmc.TabsTab("Distributions", value="x-dist", leftSection=DashIconify(icon="carbon:histogram", width=16)),
+                                                                                                dmc.TabsTab("Data Statistics", value="x-health", leftSection=DashIconify(icon="carbon:report-data", width=16)),
+                                                                                                dmc.TabsTab("Collinearity ", value="x-collinear", leftSection=DashIconify(icon="carbon:heat-map", width=16)),
+                                                                                                dmc.TabsTab("X Distribution", value="x-dist", leftSection=DashIconify(icon="carbon:histogram", width=16)),
                                                                                             ]),
                                                                                             dmc.Space(h=15),
                                                                                             
-                                                                                            # Sub-Tab: Health Table
+                                                                                            # Sub-Tab: Data Statistics
                                                                                             dmc.TabsPanel(
                                                                                                 value="x-health",
                                                                                                 children=[
@@ -168,8 +168,8 @@ def create_layout():
                                                                                             dmc.TabsPanel(
                                                                                                 value="x-collinear",
                                                                                                 children=[
-                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", children=[
-                                                                                                        dcc.Graph(id="kyd-features-graph", style={"height": "75vh"})
+                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", style={"height": "70vh", "display": "flex", "flexDirection": "column"}, children=[
+                                                                                                        dcc.Graph(id="kyd-features-graph", responsive=True, style={"flex": 1, "width": "100%"})
                                                                                                     ])
                                                                                                 ]
                                                                                             ),
@@ -178,9 +178,37 @@ def create_layout():
                                                                                             dmc.TabsPanel(
                                                                                                 value="x-dist",
                                                                                                 children=[
-                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", children=[
-                                                                                                        dcc.Graph(id="kyd-x-distribution-graph", style={"height": "60vh"})
-                                                                                                    ])
+                                                                                                    # 1. Plot Type Toggle
+                                                                                                    dmc.Group(
+                                                                                                        justify="flex-end",
+                                                                                                        mb="xs", 
+                                                                                                        children=[
+                                                                                                            dmc.RadioGroup(
+                                                                                                                id="kyd-x-plot-type",
+                                                                                                                value="histogram", 
+                                                                                                                size="sm", 
+                                                                                                                # FIX: Use dmc.Group inside children for horizontal layout
+                                                                                                                children=dmc.Group(
+                                                                                                                    gap="md",
+                                                                                                                    children=[
+                                                                                                                        dmc.Radio(label="Histogram", value="histogram"),
+                                                                                                                        dmc.Radio(label="Box Plot", value="boxplot"),
+                                                                                                                        dmc.Radio(label="Scatter Plot", value="scatterplot"),
+                                                                                                                    ]
+                                                                                                                )
+                                                                                                            )
+                                                                                                        ]
+                                                                                                    ),
+                                                                                                    # 2. Graph Card
+                                                                                                    dmc.Card(
+                                                                                                        withBorder=True, 
+                                                                                                        radius="md", 
+                                                                                                        p="md", 
+                                                                                                        style={"height": "65vh", "display": "flex", "flexDirection": "column"}, 
+                                                                                                        children=[
+                                                                                                            dcc.Graph(id="kyd-x-distribution-graph", responsive=True, style={"flex": 1, "width": "100%", "minHeight": "350px"})
+                                                                                                        ]
+                                                                                                    )
                                                                                                 ]
                                                                                             ),
                                                                                         ]
@@ -203,8 +231,8 @@ def create_layout():
                                                                                             dmc.TabsList([
                                                                                                 dmc.TabsTab("Stationarity", value="y-stat"),
                                                                                                 dmc.TabsTab("Decomposition", value="y-decomp"),
-                                                                                                dmc.TabsTab("Autocorrelation", value="y-acf"),
-                                                                                                dmc.TabsTab("Distribution", value="y-dist"),
+                                                                                                dmc.TabsTab("Lag Analysis", value="y-acf"),
+                                                                                                dmc.TabsTab("Y Distribution", value="y-dist"),
                                                                                             ]),
                                                                                             dmc.Space(h=15),
 
@@ -212,8 +240,8 @@ def create_layout():
                                                                                             dmc.TabsPanel(
                                                                                                 value="y-stat",
                                                                                                 children=[
-                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", children=[
-                                                                                                        dcc.Graph(id="kyd-stationarity-graph", style={"height": "60vh"})
+                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", style={"height": "70vh", "display": "flex", "flexDirection": "column"}, children=[
+                                                                                                        dcc.Graph(id="kyd-stationarity-graph", responsive=True, style={"flex": 1, "width": "100%"})
                                                                                                     ])
                                                                                                 ]
                                                                                             ),
@@ -222,8 +250,8 @@ def create_layout():
                                                                                             dmc.TabsPanel(
                                                                                                 value="y-decomp",
                                                                                                 children=[
-                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", children=[
-                                                                                                        dcc.Graph(id="kyd-decomposition-graph", style={"height": "80vh"})
+                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", style={"height": "70vh", "overflowY": "auto"}, children=[
+                                                                                                        dcc.Graph(id="kyd-decomposition-graph", responsive=True, style={"width": "100%", "minHeight": "800px"})
                                                                                                     ])
                                                                                                 ]
                                                                                             ),
@@ -232,8 +260,8 @@ def create_layout():
                                                                                             dmc.TabsPanel(
                                                                                                 value="y-acf",
                                                                                                 children=[
-                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", children=[
-                                                                                                        dcc.Graph(id="kyd-acf-pacf-graph", style={"height": "80vh"})
+                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", style={"height": "70vh", "display": "flex", "flexDirection": "column"}, children=[
+                                                                                                        dcc.Graph(id="kyd-acf-pacf-graph", responsive=True, style={"flex": 1, "width": "100%", "minHeight": "400px"})
                                                                                                     ])
                                                                                                 ]
                                                                                             ),
@@ -242,9 +270,36 @@ def create_layout():
                                                                                             dmc.TabsPanel(
                                                                                                 value="y-dist",
                                                                                                 children=[
-                                                                                                    dmc.Card(withBorder=True, radius="md", p="md", children=[
-                                                                                                        dcc.Graph(id="kyd-y-distribution-graph", style={"height": "60vh"})
-                                                                                                    ])
+                                                                                                    # 1. Plot Type Toggle
+                                                                                                    dmc.Group(
+                                                                                                        justify="flex-end",
+                                                                                                        mb="xs",
+                                                                                                        children=[
+                                                                                                            dmc.RadioGroup(
+                                                                                                                id="kyd-y-plot-type",
+                                                                                                                value="histogram",
+                                                                                                                size="sm",
+                                                                                                                children=dmc.Group(
+                                                                                                                    gap="md",
+                                                                                                                    children=[
+                                                                                                                        dmc.Radio(label="Histogram", value="histogram"),
+                                                                                                                        dmc.Radio(label="Box Plot", value="boxplot"),
+                                                                                                                        dmc.Radio(label="Scatter Plot", value="scatterplot"),
+                                                                                                                    ]
+                                                                                                                )
+                                                                                                            )
+                                                                                                        ]
+                                                                                                    ),
+                                                                                                    # 2. Graph Card
+                                                                                                    dmc.Card(
+                                                                                                        withBorder=True, 
+                                                                                                        radius="md", 
+                                                                                                        p="md", 
+                                                                                                        style={"height": "65vh", "display": "flex", "flexDirection": "column"}, 
+                                                                                                        children=[
+                                                                                                            dcc.Graph(id="kyd-y-distribution-graph", responsive=True, style={"flex": 1, "width": "100%", "minHeight": "350px"})
+                                                                                                        ]
+                                                                                                    )
                                                                                                 ]
                                                                                             ),
                                                                                         ]
@@ -279,7 +334,6 @@ def create_layout():
                                                                             dmc.Group(
                                                                                 gap="xs",
                                                                                 children=[
-                                                                                    dmc.Text(id="current-metric", size="sm", fw=700),
                                                                                     dmc.Button("Download Logs", id="btn-download-log", size="xs", leftSection=DashIconify(icon="carbon:download", width=14)),
                                                                                     dmc.ActionIcon(id="btn-stop", variant="outline", color="red", size="lg", children=DashIconify(icon="carbon:stop-filled", width=16)),
                                                                                     dmc.ActionIcon(id="btn-restart", variant="outline", color="orange", size="lg", children=DashIconify(icon="carbon:restart", width=16)),
@@ -296,21 +350,14 @@ def create_layout():
                                                         ],
                                                     ),
 
-                                                    # --- TAB 3: GRAPHS ---
+                                                    # --- TAB 3: Forecast ---
                                                     dmc.TabsPanel(
                                                         value="graphs",
                                                         children=[
                                                             dmc.Group(
-                                                                justify="space-between", align="center",
+                                                                justify="flex-end", align="center",
                                                                 style={"padding": "10px 16px", "backgroundColor": "#fff"},
                                                                 children=[
-                                                                    dmc.Group(
-                                                                        gap="sm",
-                                                                        children=[
-                                                                            dmc.Select(id="graph-sheet-select", placeholder="Choose sheet", data=[], style={"width": 200}, searchable=True, clearable=False),
-                                                                            dmc.Select(id="graph-metric-select", placeholder="Choose metric", data=[], style={"width": 240}, searchable=True, clearable=False),
-                                                                        ],
-                                                                    ),
                                                                     dmc.Group(
                                                                         gap="xs",
                                                                         children=[
@@ -322,9 +369,9 @@ def create_layout():
                                                             ),
                                                             dmc.Divider(variant="solid"),
                                                             dmc.Card(
-                                                                radius="md", p="md", withBorder=False, style={"height": "75vh"},
+                                                                radius="md", p="md", withBorder=False, style={"height": "75vh", "display": "flex", "flexDirection": "column"},
                                                                 children=[
-                                                                    html.Div(id="graph-container", style={"height": "100%", "width": "100%"}),
+                                                                    html.Div(id="graph-container", style={"flex": 1, "width": "100%"}),
                                                                     html.Div(id="best-model-display", style={"display": "none"}),
                                                                     html.Div(id="best-model-error", style={"display": "none"}),
                                                                 ],
@@ -332,33 +379,28 @@ def create_layout():
                                                         ],
                                                     ),
 
+                                                    # --- TAB 4: ARTIFACTS ---
                                                     dmc.TabsPanel(
                                                         value="artifacts",
                                                         children=[
-                                                            # Top Controls
+                                                            # Top Controls (Responsive Flex Group)
                                                             dmc.Group(
-                                                                justify="flex-start", align="center",
-                                                                style={"padding": "10px 16px", "backgroundColor": "#fff", "borderBottom": "1px solid #eee"},
-                                                                children=[
-                                                                    dmc.Text("Select Result:", size="sm", fw=500),
-                                                                    dmc.Select(id="artifact-sheet-select", placeholder="Choose sheet", data=[], style={"width": 200}, searchable=True, clearable=False),
-                                                                    dmc.Select(id="artifact-metric-select", placeholder="Choose metric", data=[], style={"width": 240}, searchable=True, clearable=False),
-                                                                ],
+                                                                justify="flex-start", align="flex-end",
+                                                                style={"padding": "10px 16px", "backgroundColor": "#fff", "borderBottom": "1px solid #eee"},                                
                                                             ),
-
                                                             # Inner Tabs
                                                             dmc.Tabs(
-                                                                value="treatment", # <--- CHANGED DEFAULT TO OUR NEW TAB
+                                                                value="treatment", 
                                                                 variant="pills",
                                                                 color="indigo",
                                                                 style={"padding": "10px"},
                                                                 children=[
                                                                     dmc.TabsList(
                                                                         children=[
-                                                                            dmc.TabsTab("Data Treatment", value="treatment"), # <--- NEW TAB
+                                                                            dmc.TabsTab("Data Treatment", value="treatment"),
                                                                             dmc.TabsTab("Stationarity Test", value="stationarity"),
                                                                             dmc.TabsTab("Seasonal Decomposition", value="decomposition"),
-                                                                            dmc.TabsTab("Auto Correlation", value="acf_pacf"),
+                                                                            dmc.TabsTab("Lag Analysis", value="acf_pacf"),
                                                                             dmc.TabsTab("Y Distribution", value="distribution"),
                                                                             dmc.TabsTab("Feature Analysis", value="features"),
                                                                             dmc.TabsTab("Experiment Details", value="experiments"),
@@ -367,26 +409,26 @@ def create_layout():
                                                                     
                                                                     dmc.Space(h=10),
 
-                                                                    # 0. DATA TREATMENT (NEW)
+                                                                    # 0. DATA TREATMENT
                                                                     dmc.TabsPanel(
                                                                         value="treatment",
                                                                         children=[
                                                                             dmc.Card(
                                                                                 withBorder=True, radius="md", p="md",
-                                                                                style={"height": "65vh", "overflowY": "auto"},
+                                                                                style={"height": "70vh", "display": "flex", "flexDirection": "column", "overflowY": "auto"},
                                                                                 children=[
                                                                                     dmc.Text("Data Treatment Analysis (Before vs After)", fw=700, size="lg", mb="sm"),
-                                                                                    dcc.Graph(id="treatment-graph", style={"height": "400px", "minHeight": "400px"}),
+                                                                                    dcc.Graph(id="treatment-graph", responsive=True, style={"flex": 1, "width": "100%", "minHeight": "300px"}),
                                                                                     dmc.Grid([
                                                                                         dmc.GridCol(
                                                                                             children=[
-                                                                                                dmc.Text("Target (Y) Treatment Profile", fw=600, size="sm"),
+                                                                                                dmc.Text(id="y-treatment-title", fw=600, size="sm"),
                                                                                                 html.Pre(id="y-treatment-json", style={
                                                                                                     "backgroundColor": "#f8f9fa", "padding": "10px", 
                                                                                                     "borderRadius": "5px", "overflowX": "auto", "fontSize": "12px",
                                                                                                     "border": "1px solid #dee2e6"
                                                                                                 })
-                                                                                            ], span=6
+                                                                                            ], span={"base": 12, "md": 6} 
                                                                                         ),
                                                                                         dmc.GridCol(
                                                                                             children=[
@@ -396,9 +438,9 @@ def create_layout():
                                                                                                     "borderRadius": "5px", "overflowX": "auto", "fontSize": "12px",
                                                                                                     "border": "1px solid #dee2e6"
                                                                                                 })
-                                                                                            ], span=6
+                                                                                            ], span={"base": 12, "md": 6} 
                                                                                         )
-                                                                                    ], gutter="md", style={"marginTop": "20px"})
+                                                                                    ], gutter="md", style={"marginTop": "20px", "flexShrink": 0})
                                                                                 ]
                                                                             )
                                                                         ]
@@ -410,10 +452,8 @@ def create_layout():
                                                                         children=[
                                                                             dmc.Card(
                                                                                 withBorder=True, radius="md", p="md",
-                                                                                style={"height": "65vh", "overflowY": "auto"},
-                                                                                children=[
-                                                                                    dcc.Graph(id="decomposition-graph", style={"minHeight": "1100px"}) 
-                                                                                ]
+                                                                                style={"height": "70vh", "overflowY": "auto"},
+                                                                                children=[ dcc.Graph(id="decomposition-graph", responsive=True, style={"width": "100%", "minHeight": "800px"}) ]
                                                                             )
                                                                         ]
                                                                     ),
@@ -424,10 +464,8 @@ def create_layout():
                                                                         children=[
                                                                             dmc.Card(
                                                                                 withBorder=True, radius="md", p="md",
-                                                                                style={"height": "65vh", "overflowY": "auto"},
-                                                                                children=[
-                                                                                    dcc.Graph(id="stationarity-graph", style={"minHeight": "600px"})
-                                                                                ]
+                                                                                style={"height": "70vh", "display": "flex", "flexDirection": "column"},
+                                                                                children=[ dcc.Graph(id="stationarity-graph", responsive=True, style={"flex": 1, "width": "100%"}) ]
                                                                             )
                                                                         ]
                                                                     ),
@@ -438,10 +476,8 @@ def create_layout():
                                                                         children=[
                                                                             dmc.Card(
                                                                                 withBorder=True, radius="md", p="md",
-                                                                                style={"height": "65vh", "overflowY": "auto"},
-                                                                                children=[
-                                                                                    dcc.Graph(id="acf-pacf-graph", style={"minHeight": "700px"})
-                                                                                ]
+                                                                                style={"height": "70vh", "display": "flex", "flexDirection": "column"},
+                                                                                children=[ dcc.Graph(id="acf-pacf-graph", responsive=True, style={"flex": 1, "width": "100%", "minHeight": "400px"}) ]
                                                                             )
                                                                         ]
                                                                     ),
@@ -452,10 +488,8 @@ def create_layout():
                                                                         children=[
                                                                             dmc.Card(
                                                                                 withBorder=True, radius="md", p="md",
-                                                                                style={"height": "65vh", "overflowY": "auto"},
-                                                                                children=[
-                                                                                    dcc.Graph(id="features-graph", style={"minHeight": "700px"})
-                                                                                ]
+                                                                                style={"height": "70vh", "display": "flex", "flexDirection": "column", "overflowY": "auto"},
+                                                                                children=[ dcc.Graph(id="features-graph", responsive=True, style={"flex": 1, "width": "100%", "minHeight": "400px"}) ]
                                                                             )
                                                                         ]
                                                                     ),
@@ -464,11 +498,34 @@ def create_layout():
                                                                     dmc.TabsPanel(
                                                                         value="distribution",
                                                                         children=[
-                                                                            dmc.Card(
-                                                                                withBorder=True, radius="md", p="md",
-                                                                                style={"height": "65vh", "overflowY": "auto"},
+                                                                            # 1. Plot Type Toggle
+                                                                            dmc.Group(
+                                                                                justify="flex-end",
+                                                                                mb="xs",
                                                                                 children=[
-                                                                                    dcc.Graph(id="distribution-graph", style={"minHeight": "500px"})
+                                                                                    dmc.RadioGroup(
+                                                                                        id="artifact-y-plot-type", # Unique ID for Artifacts tab
+                                                                                        value="histogram",
+                                                                                        size="sm",
+                                                                                        children=dmc.Group(
+                                                                                            gap="md",
+                                                                                            children=[
+                                                                                                dmc.Radio(label="Histogram", value="histogram"),
+                                                                                                dmc.Radio(label="Box Plot", value="boxplot"),
+                                                                                                dmc.Radio(label="Scatter Plot", value="scatterplot"),
+                                                                                            ]
+                                                                                        )
+                                                                                    )
+                                                                                ]
+                                                                            ),
+                                                                            # 2. Graph Card
+                                                                            dmc.Card(
+                                                                                withBorder=True, 
+                                                                                radius="md", 
+                                                                                p="md", 
+                                                                                style={"height": "70vh", "display": "flex", "flexDirection": "column"}, 
+                                                                                children=[
+                                                                                    dcc.Graph(id="distribution-graph", responsive=True, style={"flex": 1, "width": "100%", "minHeight": "350px"})
                                                                                 ]
                                                                             )
                                                                         ]
@@ -480,14 +537,14 @@ def create_layout():
                                                                         children=[
                                                                             dmc.Card(
                                                                                 withBorder=True, radius="md", p="md",
-                                                                                style={"height": "65vh", "overflowY": "auto"},
+                                                                                style={"height": "70vh", "display": "flex", "flexDirection": "column"},
                                                                                 children=[
                                                                                     dmc.Group(
                                                                                         align="center",
                                                                                         children=[
-                                                                                            dmc.Text("Select Performance Metric:", size="sm", fw=500),
                                                                                             dmc.Select(
                                                                                                 id="experiment-perf-metric",
+                                                                                                label="Select Performance Metric",
                                                                                                 data=[
                                                                                                     {"label": "WMAPE (Weighted Error)", "value": "WMAPE"},
                                                                                                     {"label": "MAPE (Mean % Error)", "value": "MAPE"},
@@ -495,14 +552,13 @@ def create_layout():
                                                                                                     {"label": "Accuracy (%)", "value": "Accuracy"}
                                                                                                 ],
                                                                                                 value="WMAPE",
-                                                                                                style={"width": 250},
+                                                                                                style={"minWidth": "250px", "flex": "0 1 auto"},
                                                                                                 clearable=False
                                                                                             ),
                                                                                         ],
-                                                                                        style={"marginBottom": 15}
+                                                                                        style={"marginBottom": 15, "flexShrink": 0}
                                                                                     ),
-
-                                                                                    dcc.Graph(id="experiment-graph", style={"minHeight": "600px"}) 
+                                                                                    dcc.Graph(id="experiment-graph", responsive=True, style={"flex": 1, "width": "100%", "minHeight": "400px"}) 
                                                                                 ]
                                                                             )
                                                                         ]
