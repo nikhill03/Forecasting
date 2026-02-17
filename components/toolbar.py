@@ -4,134 +4,128 @@ from dash_iconify import DashIconify
 
 def create_toolbar():
     
-    # helper for clean upload buttons (Google Ads style "Add" chips)
+    # Helper for clean upload buttons (Modern Chip Style)
     def clean_upload_btn(label, upload_id, filename_id, icon="carbon:document-add"):
         return dmc.Stack(gap=0, children=[
              dcc.Upload(
                 id=upload_id,
                 children=dmc.Group([
-                    DashIconify(icon=icon, width=16, color="#1a73e8"), # Google Blue
-                    dmc.Text(label, size="sm", fw=500, c="#3c4043")
+                    DashIconify(icon=icon, width=16, color="#1a73e8"), 
+                    dmc.Text(label, size="sm", fw=600, c="#3c4043")
                 ], gap="xs"),
                 accept=".xlsx,.xls,.csv",
                 multiple=False,
                 style={
-                    "padding": "6px 12px",
-                    "borderRadius": "4px",
-                    "border": "1px solid #dadce0",
-                    "backgroundColor": "white",
+                    "padding": "8px 16px",
+                    "borderRadius": "8px",
+                    "border": "1px solid #e9ecef",
+                    "backgroundColor": "#f8f9fa", # Soft background
                     "cursor": "pointer",
                     "transition": "all 0.2s ease",
                     "display": "flex",
                     "alignItems": "center"
                 },
-                # Hover effect handling would typically be CSS, but this is clean enough
             ),
-            dmc.Text(id=filename_id, size="10px", c="dimmed", style={"maxWidth": "120px", "whiteSpace": "nowrap", "overflow": "hidden", "textOverflow": "ellipsis", "marginTop": "2px", "paddingLeft": "4px"})
+            dmc.Text(
+                id=filename_id, 
+                size="10px", 
+                c="blue.6", 
+                fw=500,
+                style={
+                    "maxWidth": "120px", 
+                    "whiteSpace": "nowrap", 
+                    "overflow": "hidden", 
+                    "textOverflow": "ellipsis", 
+                    "marginTop": "4px", 
+                    "paddingLeft": "4px"
+                }
+            )
         ])
 
     return dmc.Paper(
-        shadow="none", # Flat look
-        radius=0,
+        shadow="sm", 
+        radius="lg",
         p="sm",
+        mx="md", # Add margin to float it slightly
         style={
-            "backgroundColor": "white", 
-            "borderBottom": "1px solid #dadce0", # Google-like subtle border
+            "backgroundColor": "rgba(255, 255, 255, 0.9)", 
+            "backdropFilter": "blur(10px)", # Glassmorphism effect
+            "border": "1px solid #eaeaea",
             "position": "sticky", 
-            "top": 0, 
-            "zIndex": 99
+            "top": "80px", # Offset below header
+            "zIndex": 99,
+            "marginTop": "10px"
         },
         children=dmc.Group(
             justify="space-between",
-            align="center", # Vertically center everything
+            align="center",
             children=[
                 
                 # --- SECTION 1: DATA SOURCES ---
-                dmc.Group(gap="md", children=[
-                    dmc.Text("Data Sources", size="xs", fw=700, c="dimmed", tt="uppercase", style={"letterSpacing": "0.5px"}),
-                    clean_upload_btn("Target (Y)", "upload-target", "filename-target", "carbon:chart-line-data"),
-                    clean_upload_btn("Features (X)", "upload-features", "filename-features", "carbon:data-1"),
+                dmc.Group(gap="lg", children=[
+                    dmc.Stack(gap=2, children=[
+                        dmc.Text("Upload Data ", size="10px", fw=700, c="dimmed", tt="uppercase"),
+                        dmc.Group(gap="sm", children=[
+                            clean_upload_btn("Target (Y)", "upload-target", "filename-target", "carbon:chart-line-data"),
+                            clean_upload_btn("Features (X)", "upload-features", "filename-features", "carbon:data-1"),
+                        ])
+                    ]),
                 ]),
 
-                # Divider
-                dmc.Divider(orientation="vertical", h=32, color="gray.3"),
-
                 # --- SECTION 2: CONFIGURATION ---
-                dmc.Group(gap="sm", children=[
+                dmc.Group(gap="md", children=[
+                    dmc.Divider(orientation="vertical", h=40, color="gray.2"),
                     dmc.Select(
                         id="select-sheet-target",
-                        placeholder="Sheet",
+                        label="Worksheet",
+                        placeholder="Select Sheet",
                         data=[],
                         disabled=True,
-                        style={"width": 130},
-                        size="sm",
-                        radius="sm",
-                        variant="filled", # Gray background input
-                        leftSection=DashIconify(icon="carbon:table", width=14, color="#5f6368")
+                        style={"width": 150},
+                        size="xs",
+                        radius="md",
+                        variant="filled",
+                        leftSection=DashIconify(icon="carbon:table", width=14, color="#1a73e8")
                     ),
                     dmc.Select(
                         id="select-col-target",
-                        placeholder="Column",
+                        label="Target Metric",
+                        placeholder="Select Column",
                         data=[],
                         disabled=True,
-                        style={"width": 130},
-                        size="sm",
-                        radius="sm",
+                        style={"width": 150},
+                        size="xs",
+                        radius="md",
                         variant="filled",
-                        leftSection=DashIconify(icon="carbon:column", width=14, color="#5f6368")
+                        leftSection=DashIconify(icon="carbon:column", width=14, color="#1a73e8")
                     ),
                     dmc.NumberInput(
                         id="forecast-horizon-input",
+                        label="Horizon (Days)",
                         value=60,
-                        min=1, max=365, step=1,
-                        placeholder="60",
-                        style={"width": 80},
-                        size="sm",
-                        radius="sm",
+                        min=1, max=365,
+                        style={"width": 100},
+                        size="xs",
+                        radius="md",
                         variant="filled",
-                        leftSection=DashIconify(icon="carbon:time", width=14, color="#5f6368")
+                        leftSection=DashIconify(icon="carbon:time", width=14, color="#1a73e8")
                     ),
                 ]),
 
-                # Divider
-                dmc.Divider(orientation="vertical", h=32, color="gray.3"),
-
                 # --- SECTION 3: ACTIONS ---
-                dmc.Group(gap="xs", children=[
-                    # Primary Action (Run)
+                dmc.Group(gap="sm", children=[
+                    dmc.Divider(orientation="vertical", h=40, color="gray.2"),
                     dmc.Button(
                         "Run Forecast",
                         id="run-models-btn",
-                        color="blue", # Google Blue
-                        leftSection=DashIconify(icon="carbon:play-filled"),
+                        # The .css gradient-button class will apply the indigo gradient
+                        className="gradient-button",
+                        leftSection=DashIconify(icon="carbon:play-filled", width=18),
                         size="sm",
-                        radius="sm"
+                        radius="md",
+                        px="xl",
+                        style={"fontWeight": 700}
                     ),
-                    
-                    # Icon Actions Group
-                    dmc.Group(gap=4, children=[
-                        dmc.Tooltip(
-                            label="Stop",
-                            children=dmc.ActionIcon(
-                                id="btn-stop", variant="light", color="red", size="lg", radius="sm",
-                                children=DashIconify(icon="carbon:stop-filled", width=18)
-                            )
-                        ),
-                        dmc.Tooltip(
-                            label="Restart",
-                            children=dmc.ActionIcon(
-                                id="btn-restart", variant="light", color="orange", size="lg", radius="sm",
-                                children=DashIconify(icon="carbon:restart", width=18)
-                            )
-                        ),
-                        dmc.Tooltip(
-                            label="Clear",
-                            children=dmc.ActionIcon(
-                                id="clear-graph", variant="subtle", color="gray", size="lg", radius="sm",
-                                children=DashIconify(icon="carbon:trash-can", width=18)
-                            )
-                        ),
-                    ])
                 ])
             ]
         )
