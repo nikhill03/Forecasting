@@ -6,6 +6,7 @@ import os
 import threading
 import traceback
 from datetime import datetime
+from dash_iconify import DashIconify
 from typing import Dict, Any, List, Optional
 
 import dash_mantine_components as dmc
@@ -22,8 +23,10 @@ from services.data_handling import DataHandling
 from services.forecast_artifact import (
     generate_experiment_figure, generate_health_summary_table, generate_seasonality_figure, generate_stationarity_figure,
     generate_acf_pacf_figure, generate_distribution_figure, generate_feature_heatmap,
-    generate_multivariate_feature_analysis, generate_treatment_comparison_figure
+    generate_multivariate_feature_analysis, generate_treatment_comparison_figure, generate_holiday_table, 
+    generate_holiday_charts, generate_holiday_windows
 )
+from layout.main_layout import elevated_card
 
 # Import services used by your app (paths must match your project)
 from services.processing_engine import (
@@ -748,9 +751,13 @@ def register_processing_callbacks(app):
             return [], []
 
     # ------------------------------------------------------------------
-    #  3. RUN HEALTH CHECK & GENERATE ALL KYD CHARTS
+    #  3. RUN HEALTH CHECK & GENERATE ALL KYD CHARTS (UPDATED)
     # ------------------------------------------------------------------
     @app.callback(
+        # Visibility Outputs
+        Output("kyd-empty-state", "style"),
+        Output("kyd-main-content", "style"),
+
         # X Outputs
         Output("health-check-content", "children"),
         Output("kyd-features-graph", "figure"),
@@ -775,13 +782,37 @@ def register_processing_callbacks(app):
         prevent_initial_call=True
     )
     def run_health_check(n_clicks, plot_type_x, plot_type_y, target_store, target_sheet, target_col, feature_store):
+        # 1. INITIAL VALIDATION
+        has_data = (target_store is not None and len(target_store) > 0) or \
+                   (feature_store is not None and len(feature_store) > 0)
+
+        if n_clicks and n_clicks > 0 and has_data:
+            style_empty = {"display": "none"}
+            style_content = {"display": "block"}
+        else:
+            style_empty = {
+                "height": "60vh", 
+                "display": "flex", 
+                "flexDirection": "column", 
+                "alignItems": "center", 
+                "justifyContent": "center"
+            }
+            style_content = {"display": "none"}
+
+        if not has_data:
+            return (style_empty, style_content, no_update, no_update, no_update, 
+                    no_update, no_update, no_update, no_update)
+        
         ctx = callback_context
         trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
         
-        empty = go.Figure()
-        no_data_alert = dmc.Alert("Data missing. Please upload files.", color="red")
-        
-        # Default Returns (no_update prevents flickering of untouched graphs)
+        # Flags
+        update_x = (trigger_id == "btn-check-health")
+        update_y = (trigger_id == "btn-check-health")
+        only_update_x_dist = (trigger_id == "kyd-x-plot-type")
+        only_update_y_dist = (trigger_id == "kyd-y-plot-type")
+
+        # Default Returns
         ret_health = no_update
         ret_feat = no_update
         ret_dist_x = no_update
@@ -790,38 +821,59 @@ def register_processing_callbacks(app):
         ret_acf = no_update
         ret_dist_y = no_update
 
-        # Flags for efficiency
-        update_x = (trigger_id == "btn-check-health")
-        update_y = (trigger_id == "btn-check-health")
-        
-        only_update_x_dist = (trigger_id == "kyd-x-plot-type")
-        only_update_y_dist = (trigger_id == "kyd-y-plot-type")
+        # ---------------------------
+        # PROCESS X (FEATURES) + MERGE Y
+        # ---------------------------
+        if update_x or only_update_x_dist:
+            if not feature_store:
+                ret_health = dmc.Stack([dmc.Text("No Features (X) Data", size="lg", fw=500, c="gray")])
+            else:
+                try:
+                    # Load Features
+                    sheet_x = list(feature_store.keys())[0]
+                    df_x = pd.read_json(feature_store[sheet_x], orient='split')
+                    
+                    # --- CRITICAL FIX: MERGE TARGET FOR HEATMAP ---
+                    if target_store and target_sheet and target_col:
+                        df_y_tmp = pd.read_json(target_store[target_sheet], orient='split')
+                        
+                        # Find date columns for alignment
+                        date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
+                        date_col_y = next((c for c in df_y_tmp.columns if "date" in str(c).lower()), None)
+                        
+                        if date_col_x and date_col_y:
+                            df_x[date_col_x] = pd.to_datetime(df_x[date_col_x])
+                            df_y_tmp[date_col_y] = pd.to_datetime(df_y_tmp[date_col_y])
+                            
+                            # Merge Target variable into the Feature Dataframe
+                            df_merged_kyd = df_x.merge(
+                                df_y_tmp[[date_col_y, target_col]], 
+                                left_on=date_col_x, 
+                                right_on=date_col_y, 
+                                how="inner"
+                            )
+                            records_x = df_merged_kyd.to_dict(orient="records")
+                        else:
+                            records_x = df_x.to_dict(orient="records")
+                    else:
+                        records_x = df_x.to_dict(orient="records")
 
-        # ---------------------------
-        # PROCESS X (FEATURES)
-        # ---------------------------
-        if (update_x or only_update_x_dist) and feature_store:
-            try:
-                sheet_x = list(feature_store.keys())[0]
-                df_x = pd.read_json(feature_store[sheet_x], orient='split')
-                date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
-                x_cols = [c for c in df_x.columns if pd.api.types.is_numeric_dtype(df_x[c]) and c != date_col_x]
-                
-                if x_cols:
-                    records_x = df_x.to_dict(orient="records")
+                    # Identify feature columns for charts
+                    date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
+                    x_cols = [c for c in df_x.columns if pd.api.types.is_numeric_dtype(df_x[c]) and c != date_col_x]
                     
-                    # Always generate distribution if triggered
-                    fig_dist_x = generate_distribution_figure(records_x, x_cols=x_cols, plot_type=plot_type_x)
-                    ret_dist_x = fig_dist_x
+                    # Update Distribution
+                    ret_dist_x = generate_distribution_figure(records_x, x_cols=x_cols, plot_type=plot_type_x)
                     
-                    # Generate heavy charts ONLY on button click
+                    # Generate Collinearity and Health Table on Button Click
                     if update_x:
                         fig_health = generate_health_summary_table(records_x, x_cols)
                         ret_health = dcc.Graph(figure=fig_health, config={'displayModeBar': False})
-                        ret_feat = generate_feature_heatmap(records_x, x_cols)
+                        # records_x now contains target_col (Canceled)
+                        ret_feat = generate_feature_heatmap(records_x, target_col=target_col, x_cols=x_cols)
 
-            except Exception as e:
-                if update_x: ret_health = dmc.Alert(f"Error processing Features: {str(e)}", color="red")
+                except Exception as e:
+                    if update_x: ret_health = dmc.Alert(f"Error: {str(e)}", color="red")
 
         # ---------------------------
         # PROCESS Y (TARGET)
@@ -841,25 +893,21 @@ def register_processing_callbacks(app):
                         records_y.append({"Date": r[date_col_y], "TrainActual": r[target_col]})
                     
                     if records_y:
-                        # Always generate Y distribution if triggered (Passing plot_type_y)
                         records_y_dist = valid_y.to_dict(orient="records")
                         ret_dist_y = generate_distribution_figure(records_y_dist, metric=target_col, plot_type=plot_type_y)
                         
-                        # Generate heavy charts ONLY on button click
                         if update_y:
                             ret_stat = generate_stationarity_figure(records_y, target_col)
-                            
                             series = pd.Series([r["TrainActual"] for r in records_y])
                             adi = calculate_adi(series); cv2 = calculate_cv2(series)
                             d_type = classify_demand(adi, cv2)
                             ret_decomp = generate_seasonality_figure(records_y, target_col, {"adi": adi, "cv2": cv2, "type": d_type})
-                            
                             ret_acf = generate_acf_pacf_figure(records_y, target_col)
                         
             except Exception as e:
                  print(f"Error processing Target: {e}")
 
-        return (ret_health, ret_feat, ret_dist_x, ret_stat, ret_decomp, ret_acf, ret_dist_y)
+        return (style_empty, style_content, ret_health, ret_feat, ret_dist_x, ret_stat, ret_decomp, ret_acf, ret_dist_y)
     
     # 2.5 Render Data Treatment Analysis (Before/After & JSON)
     @app.callback(
@@ -914,3 +962,89 @@ def register_processing_callbacks(app):
             else:
                 return generate_feature_heatmap(records, metric)
         except: return go.Figure()
+    
+    # ------------------------------------------------------------------
+    #  4. RENDER HOLIDAY ANALYSIS (COMBINED DASHBOARD)
+    # ------------------------------------------------------------------
+    @app.callback(
+        Output("kyd-holiday-container", "children"),
+        Input("btn-check-health", "n_clicks"),
+        State("store-target-dfs", "data"),
+        State("select-sheet-target", "value"),
+        State("select-col-target", "value"),
+        State("store-feature-dfs", "data"),
+        prevent_initial_call=True
+    )
+    def render_holiday_analysis(n_clicks, target_store, target_sheet, target_col, feature_store):
+        if not n_clicks or not target_store:
+            return no_update
+
+        try:
+            # 1. Load and Align Data (Y + X)
+            df_y = pd.read_json(target_store[target_sheet], orient='split')
+            date_col_y = next((c for c in df_y.columns if "date" in str(c).lower()), None)
+            df_y[date_col_y] = pd.to_datetime(df_y[date_col_y])
+            df_y = df_y.set_index(date_col_y).sort_index()
+
+            df_merged = None
+            if feature_store:
+                sheet_x = list(feature_store.keys())[0]
+                df_x = pd.read_json(feature_store[sheet_x], orient='split')
+                date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
+                if date_col_x:
+                    df_x[date_col_x] = pd.to_datetime(df_x[date_col_x])
+                    df_x = df_x.set_index(date_col_x).sort_index()
+                    df_merged = df_y[[target_col]].join(df_x, how="inner").reset_index()
+            
+            if df_merged is None:
+                df_merged = df_y[[target_col]].reset_index()
+
+            # 2. Holiday Detection (US & India)
+            import holidays
+            us_h = holidays.US(); in_h = holidays.India()
+            df_merged["Is_Holiday"] = df_merged[date_col_y].apply(lambda x: 1 if x in us_h or x in in_h else 0)
+            df_merged["Holiday_Name"] = df_merged[date_col_y].apply(lambda x: us_h.get(x) or in_h.get(x))
+
+            # 3. Generate Visuals from Services
+            
+            records = df_merged.to_dict(orient="records")
+            
+            table_fig = generate_holiday_table(records, target_col)
+            charts_fig = generate_holiday_charts(records, target_col)
+            window_fig = generate_holiday_windows(records, target_col)
+
+            # 4. Return UI with Cards and Spacing
+            return dmc.Stack(gap="lg", children=[
+                # 1. Table Card
+                dmc.Stack(gap="xs", children=[
+                    dmc.Text("Holiday Inventory & Event Mapping", fw=700, size="md", style={"color": "#1c1e21"}),
+                    elevated_card(
+                        children=dcc.Graph(figure=table_fig, config={'displayModeBar': False}),
+                        height="auto",
+                        overflow="visible"
+                    ),
+                ]),
+                
+                # 2. Plots Card (Violin + Top 5 Bar)
+                dmc.Stack(gap="xs", children=[
+                    dmc.Text("Holiday Impact Analysis (Actuals vs Mean)", fw=700, size="md", style={"color": "#1c1e21"}),
+                    elevated_card(
+                        children=dcc.Graph(figure=charts_fig, config={'displayModeBar': True}),
+                        height="600px",
+                        overflow="auto"
+                    ),
+                ]),
+
+                # 3. Window Analysis Card (3x3 Grid)
+                dmc.Stack(gap="xs", children=[
+                    dmc.Text("Holiday Temporal Impact (Window View)", fw=700, size="md", style={"color": "#1c1e21"}),
+                    elevated_card(
+                        children=dcc.Graph(figure=window_fig),
+                        height="900px", # Tall enough for the 3x3 grid
+                        overflow="auto"
+                    ),
+                ])
+            ])
+
+        except Exception as e:
+            return dmc.Alert(f"Holiday Analysis Error: {str(e)}", color="red", variant="filled")
