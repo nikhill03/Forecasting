@@ -102,7 +102,6 @@ def create_layout():
                                                         children=[
                                                             dmc.Stack(gap=0, children=[
                                                                 dmc.Text("Data Diagnosis & Health Check", size="xl", fw=800, style={"color": "#1c1e21"}),
-                                                                dmc.Text("Uncover insights regarding stationarity, collinearity, and seasonality.", size="sm", c="dimmed"),
                                                             ]),
                                                             dmc.Button(
                                                                 "Generate Analysis",
@@ -133,17 +132,8 @@ def create_layout():
                                                                 children=DashIconify(icon="carbon:analytics", width=100, color="#1a73e8")
                                                             ),
                                                             dmc.Stack(gap=5, align="center", children=[
-                                                                dmc.Text("Intelligent Data Discovery", size="28px", fw=800, className="gradient-text"),
-                                                                dmc.Text(
-                                                                    "Upload your Target (Y) and Features (X) files, then click 'Generate Analysis' to unlock insights.",
-                                                                    size="md", c="dimmed", style={"textAlign": "center", "maxWidth": "500px"}
-                                                                ),
+                                                                dmc.Text("Upload your Target (Y) and Features (X) files", size="28px", fw=800, className="gradient-text"),                                                                
                                                             ]),
-                                                            dmc.Group([
-                                                                dmc.Badge("Stationarity", color="blue", variant="dot"),
-                                                                dmc.Badge("Collinearity", color="indigo", variant="dot"),
-                                                                dmc.Badge("Holiday Impact", color="cyan", variant="dot"),
-                                                            ])
                                                         ]
                                                     ),
 
