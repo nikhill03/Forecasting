@@ -1,0 +1,68 @@
+/* assets/style.css */
+
+:root {
+    /* Standardized Palette */
+    --primary-blue: #1a73e8;
+    --primary-indigo: #6a11cb;
+    --primary-gradient: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-indigo) 100%);
+    --surface-bg: #f8f9fa;
+    --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+}
+
+/* Global Tab Overrides */
+.mantine-Tabs-tab {
+    transition: all 0.3s ease;
+    border-radius: 8px !important;
+    margin: 0 4px;
+}
+
+.mantine-Tabs-tab[data-active] {
+    background: var(--primary-gradient) !important;
+    color: white !important;
+    border: none !important;
+    box-shadow: 0 4px 12px rgba(26, 115, 232, 0.3);
+}
+
+/* Table UI Upgrade */
+.mantine-Table-thead {
+    background: var(--primary-gradient) !important;
+}
+
+.mantine-Table-thead th {
+    color: white !important;
+    font-weight: 700 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.mantine-Table-tr:hover {
+    background-color: #f1f3f5 !important;
+}
+
+/* Gradient Text & Utilities */
+.gradient-text {
+    /* Primary Gradient */
+    background: linear-gradient(90deg, var(--primary-blue), var(--primary-indigo));
+    
+    /* Standard property for compatibility */
+    background-clip: text; 
+    
+    /* Vendor-prefixed property for Safari/Chrome */
+    -webkit-background-clip: text; 
+    
+    /* Required to reveal the gradient underneath */
+    -webkit-text-fill-color: transparent; 
+    
+    display: inline-block;
+}
+
+.code-block {
+    background-color: var(--surface-bg);
+    padding: 15px;
+    border-radius: 8px;
+    overflow-x: auto;
+    font-size: 13px;
+    border: 1px solid #dee2e6;
+    font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', monospace;
+    line-height: 1.5;
+}
