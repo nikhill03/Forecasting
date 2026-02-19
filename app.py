@@ -23,23 +23,23 @@ logging.getLogger("prophet").setLevel(logging.WARNING)
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
-
 def create_app():
     app = dash.Dash(
         __name__,
         external_stylesheets=[
-            "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap",
+            "https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&display=swap", 
         ],
         suppress_callback_exceptions=True,
     )
-    app.title = "Capacity Forecast"
-
-    # Attach the layout
+    
     app.layout = dmc.MantineProvider(
-        theme={"fontFamily": "'Inter', sans-serif", "primaryColor": "blue"},
+        theme={
+            "fontFamily": "'Plus Jakarta Sans', sans-serif",
+            "primaryColor": "blue",
+            "defaultRadius": "md",
+        },
         children=[create_layout()],
     )
-
     return app
 
 
@@ -55,7 +55,7 @@ def main():
     register_processing_callbacks(app)
     logger.info("Processing callbacks registered.")
 
-    app.run(debug=True, port=8080, use_reloader=False)
+    app.run(debug=True, port=8081, use_reloader=False)
 
 if __name__ == "__main__":
     main()
