@@ -40,6 +40,7 @@ def create_layout():
             # --- NEW STORES FOR SPLIT UPLOAD ---
             dcc.Store(id="store-target-dfs", data={}),   # Holds Target (Y) File Data
             dcc.Store(id="store-feature-dfs", data={}),  # Holds Feature (X) File Data
+            dcc.Store(id="selected-region-store", data=["US", "IN"]),
             
             dcc.Store(id="uploaded-raw", data=None), 
             dcc.Store(id="uploaded-dfs", data={}),   
@@ -57,18 +58,18 @@ def create_layout():
             # Main container
             dmc.Container(
                 fluid=True,
-                py="md",
+                py="xs",
                 children=[
                     
                     # 1. TOOLBAR
                     create_toolbar(),
                     
-                    dmc.Space(h="lg"),
+                    dmc.Space(h="sm"),
 
                     # 2. Main Content Area (Full Width)
                     dmc.Paper(
                         radius="lg", shadow="md", withBorder=True, p=0,
-                        style={"minHeight": "85vh", "backgroundColor": "white", "overflow": "hidden"},
+                        style={"minHeight": "85vh", "backgroundColor": "white", "overflow": "hidden", "marginTop": "0px"},
                         children=[
                             dmc.Tabs(
                                 id="content-tabs",
@@ -331,55 +332,63 @@ def create_layout():
                                             dmc.Stack(
                                                 p="xl", gap="md",
                                                 children=[
-                                                    # Top Toolbar for Forecast Actions
-                                                    dmc.Group(
-                                                        justify="space-between", align="center",
-                                                        children=[
-                                                            dmc.Stack(gap=0, children=[
-                                                                dmc.Text("Forecast Overview", fw=800, size="xl", style={"color": "#1c1e21"}),
-                                                            ]),
-                                                            dmc.Group(
-                                                                gap="sm",
-                                                                children=[
-                                                                    dmc.Button(
-                                                                        "Export CSV", 
-                                                                        id="export-csv", 
-                                                                        variant="light",
-                                                                        color="indigo",
-                                                                        size="sm", 
-                                                                        radius="md", 
-                                                                        leftSection=DashIconify(icon="carbon:download", width=16)
-                                                                    ),
-                                                                    dmc.Button(
-                                                                        "Clear", 
-                                                                        id="clear-graph", 
-                                                                        variant="outline", 
-                                                                        color="gray",
-                                                                        size="sm", 
-                                                                        radius="md", 
-                                                                        leftSection=DashIconify(icon="carbon:eraser", width=16)
-                                                                    ),
-                                                                ],
-                                                            ),
-                                                        ],
-                                                    ),
-                                                    
-                                                    dmc.Divider(variant="solid", color="#f1f3f5"),
-
-                                                    # Main Graph Container wrapped in elevated card
                                                     elevated_card(
-                                                        height="75vh",
+                                                        height="82vh",
                                                         children=[
                                                             dmc.Stack(
-                                                                style={"height": "100%"},
+                                                                style={"height": "100%"}, gap="md",
                                                                 children=[
-                                                                    # This Div receives the metrics badges and Plotly graph from processing.py
+                                                                    # Reordered Header Area
+                                                                    dmc.Group(
+                                                                        justify="space-between", 
+                                                                        align="center",
+                                                                        p="sm",
+                                                                        children=[
+                                                                            # Left Side: Best Model Display (Now First)
+                                                                            html.Div(
+                                                                                id="best-model-display", 
+                                                                                style={
+                                                                                    "display": "flex", 
+                                                                                    "alignItems": "center",
+                                                                                    "gap": "10px" # Spacing between badges
+                                                                                }
+                                                                            ),
+                                                                            
+                                                                            # Right Side: Action Buttons (Now Second)
+                                                                            dmc.Group(
+                                                                                gap="sm",
+                                                                                children=[
+                                                                                    dmc.Button(
+                                                                                        "Export CSV", 
+                                                                                        id="export-csv", 
+                                                                                        variant="light",
+                                                                                        color="indigo",
+                                                                                        size="sm", 
+                                                                                        radius="md", 
+                                                                                        leftSection=DashIconify(icon="carbon:download", width=16)
+                                                                                    ),
+                                                                                    dmc.Button(
+                                                                                        "Clear", 
+                                                                                        id="clear-graph", 
+                                                                                        variant="outline", 
+                                                                                        color="gray",
+                                                                                        size="sm", 
+                                                                                        radius="md", 
+                                                                                        leftSection=DashIconify(icon="carbon:eraser", width=16)
+                                                                                    ),
+                                                                                ],
+                                                                            ),
+                                                                        ],
+                                                                    ),
+                                                                    
+                                                                    dmc.Divider(variant="solid", color="#f1f3f5", px="sm"),
+
+                                                                    # Main Graph Container
                                                                     html.Div(
                                                                         id="graph-container", 
-                                                                        style={"flex": 1, "width": "100%"}
+                                                                        style={"flex": 1, "width": "100%", "padding": "0 10px"}
                                                                     ),
-                                                                    # Keep hidden logic containers for worker data
-                                                                    html.Div(id="best-model-display", style={"display": "none"}),
+                                                                    
                                                                     html.Div(id="best-model-error", style={"display": "none"}),
                                                                 ]
                                                             )
@@ -459,12 +468,59 @@ def create_layout():
                                                     ]),
 
                                                     # 6. EXPERIMENTS
-                                                    dmc.TabsPanel(value="experiments", children=[
-                                                        elevated_card(children=[
-                                                            dmc.Select(id="experiment-perf-metric", label="Select Performance Metric", data=[{"label": "WMAPE", "value": "WMAPE"}, {"label": "MAE", "value": "MAE"}, {"label": "Accuracy (%)", "value": "Accuracy"}], value="WMAPE", style={"width": "250px", "marginBottom": 15}),
-                                                            dcc.Graph(id="experiment-graph", responsive=True, style={"height": "100%"}) 
-                                                        ])
-                                                    ]),                                                                   
+                                                    dmc.TabsPanel(
+                                                        value="experiments",
+                                                        children=[
+                                                            elevated_card(
+                                                                height="auto", # Allows card to scale with content
+                                                                children=[
+                                                                    dmc.Stack(
+                                                                        gap="md",
+                                                                        children=[
+                                                                            # 1. Header Area with Action-Driven Select
+                                                                            dmc.Group(
+                                                                                justify="space-between",
+                                                                                children=[
+                                                                                    dmc.Stack(gap=0, children=[
+                                                                                        dmc.Text("Model Performance Benchmark", fw=700, size="lg", style={"color": "#1c1e21"}),
+                                                                                    ]),
+                                                                                    # Modern Select with Icon
+                                                                                    dmc.Select(
+                                                                                        id="experiment-perf-metric",
+                                                                                        placeholder="Select Metric",
+                                                                                        data=[
+                                                                                            {"label": "WMAPE", "value": "WMAPE"}, 
+                                                                                            {"label": "MAE", "value": "MAE"}, 
+                                                                                            {"label": "Accuracy (%)", "value": "Accuracy"}
+                                                                                        ],
+                                                                                        value="WMAPE",
+                                                                                        style={"width": "200px"},
+                                                                                        size="sm",
+                                                                                        radius="md",
+                                                                                        variant="filled",
+                                                                                        leftSection=DashIconify(icon="carbon:meter-alt", width=16, color="#1a73e8"),
+                                                                                    )
+                                                                                ]
+                                                                            ),
+                                                                            
+                                                                            dmc.Divider(color="#f1f3f5"),
+
+                                                                            # 2. Main Benchmarking Chart
+                                                                            dmc.Box(
+                                                                                style={"minHeight": "500px", "width": "100%"},
+                                                                                children=dcc.Graph(
+                                                                                    id="experiment-graph", 
+                                                                                    responsive=True, 
+                                                                                    style={"height": "100%"},
+                                                                                    config={'displayModeBar': False} # Clean UI
+                                                                                )
+                                                                            )
+                                                                        ]
+                                                                    )
+                                                                ]
+                                                            )
+                                                        ]
+                                                    ),                                                                  
                                                 ]
                                             )
                                         ]
