@@ -17,6 +17,7 @@ from dash.exceptions import PreventUpdate
 
 import plotly.subplots as sp
 from services.processing_engine import HISTORY_LOG, PROGRESS_JSON  
+from utils.holiday_utils import get_region_holidays
 
 from services.data_handling import DataHandling 
 
@@ -210,12 +211,13 @@ def register_processing_callbacks(app):
         
         # Config Inputs
         State("forecast-horizon-input", "value"),
-        
+        State("select-region-config", "value"),
+
         prevent_initial_call=True
     )
     def control_run(n_click, stop_click, restart_click, n_int, clear_click,
                     target_store, target_sheet, target_col, 
-                    feature_store, horizon):
+                    feature_store, horizon, selected_regions):
         
         global WORKER_THREAD
         global IN_MEMORY_LOGS
@@ -334,7 +336,8 @@ def register_processing_callbacks(app):
                             selected_x_cols=x_cols_list,
                             x_clean_weekday="median",
                             x_clean_weekend="zero",
-                            forecast_horizon=int(horizon or 60)
+                            forecast_horizon=int(horizon or 60),
+                            selected_regions=selected_regions
                         )
                     except Exception as e:
                         _append_log(f"Worker Error: {str(e)}")
@@ -511,55 +514,36 @@ def register_processing_callbacks(app):
         return options, options[0]["value"], False
 
     # Render graphs
-    # Render graphs (Auto-detected Single Y)
     @app.callback(
-        Output("graph-container", "children"),
+        [Output("best-model-display", "children"),
+        Output("graph-container", "children")],
         Input("predictions-store", "data"),
         prevent_initial_call=False,
     )
     def render_graph(preds):
         if not preds:
-            return dmc.Text("No predictions available. Run the pipeline first.")
+            # Return empty for display and a message for graph
+            return None, dmc.Text("No predictions available. Run the pipeline first.")
 
-        # 1. AUTO-DETECT SHEET & METRIC
         try:
             sheet = next(iter(preds.keys()))
             sheet_obj = preds[sheet]
-            if "metrics" not in sheet_obj or not sheet_obj["metrics"]:
-                 return dmc.Text("No metrics found in predictions.")
-            
             metric = next(iter(sheet_obj["metrics"].keys()))
             metric_obj = sheet_obj["metrics"][metric]
         except (StopIteration, KeyError, TypeError, AttributeError):
-             return dmc.Text("Waiting for data...")
+             return None, dmc.Text("Waiting for data...")
         
-        # 2. Retrieve values
+        # ... [Keep your existing value retrieval logic] ...
         model_name = metric_obj.get("best_model") or metric_obj.get("model") or "Unknown"
         acc_val = metric_obj.get("accuracy", 0.0)
         mae_val = metric_obj.get("mae") or 0.0
 
-        # 3. Format Badges
-        try:
-            final_acc = int(round(float(acc_val)))
-            acc_text = f"Accuracy: {final_acc}%"
-        except (ValueError, TypeError):
-            acc_text = "Accuracy: N/A"
-
-        try:
-            final_mae = int(round(float(mae_val)))
-            mae_text = f"Avg. Error: {final_mae}"
-        except (ValueError, TypeError):
-            mae_text = "Avg. Error: N/A"
-
-        metrics_strip = dmc.Group(
-            children=[
-                dmc.Badge(f"Best Model: {model_name}", color="gray", variant="outline", size="lg"),                
-                dmc.Badge(acc_text, color="blue", variant="light", size="lg"),
-                dmc.Badge(mae_text, color="blue", variant="light", size="lg"),
-            ],
-            gap="sm",
-            style={"marginBottom": "15px", "marginTop": "5px"}
-        )
+        # --- UI UPGRADE: Modernized Badges ---
+        metrics_strip = [
+            dmc.Badge(f"BEST MODEL: {model_name.upper()}", color="gray", variant="outline", size="lg", radius="xl"),                
+            dmc.Badge(f"ACCURACY: {int(round(float(acc_val)))}%", color="blue", variant="light", size="lg", radius="xl"),
+            dmc.Badge(f"AVG. ERROR: {int(round(float(mae_val)))}", color="blue", variant="light", size="lg", radius="xl"),
+        ]
         
         df = pd.DataFrame(metric_obj.get("records", []))
         
@@ -601,18 +585,46 @@ def register_processing_callbacks(app):
                 name="Forecast", line=dict(color="#2ca02c"), 
             ))
 
-        fig.update_layout(
-            title=f"Forecast: {metric}", 
-            xaxis_title="Date",
-            yaxis_title="Volume",
-            margin=dict(t=30, b=30, l=50, r=10),
-            template="plotly_white",
-            autosize=True
-        )
+        fig.update_layout(template="plotly_white", margin=dict(t=20, b=30, l=50, r=10))
 
-        return [metrics_strip, dcc.Graph(figure=fig, style={"height": "60vh"})]
-
+        return metrics_strip, dcc.Graph(figure=fig, style={"height": "70vh"})
     
+    # Callback to handle CSV Export for the Forecast Tab
+    @app.callback(
+        Output("download-csv", "data"),
+        Input("export-csv", "n_clicks"),
+        State("predictions-store", "data"),
+        prevent_initial_call=True,
+    )
+    def export_forecast_to_csv(n_clicks, preds):
+        if not n_clicks or not preds:
+            raise PreventUpdate
+
+        try:
+            # 1. Identify the current sheet and metric being viewed
+            sheet = next(iter(preds.keys()))
+            metric = next(iter(preds[sheet]["metrics"].keys()))
+            metric_data = preds[sheet]["metrics"][metric]
+            
+            # 2. Convert the internal 'records' list back to a DataFrame
+            records = metric_data.get("records", [])
+            if not records:
+                raise PreventUpdate
+                
+            df_export = pd.DataFrame(records)
+            
+            # 3. Clean up date formatting for Excel compatibility
+            if "Date" in df_export.columns:
+                df_export["Date"] = pd.to_datetime(df_export["Date"]).dt.strftime('%Y-%m-%d')
+            
+            # 4. Generate the download
+            filename = f"forecast_{metric}_{datetime.now().strftime('%Y%m%d')}.csv"
+            return dcc.send_data_frame(df_export.to_csv, filename, index=False)
+            
+        except Exception as e:
+            print(f"Export CSV Error: {str(e)}")
+            raise PreventUpdate
+
 
     # 2. Render Seasonal Decomposition (Using Service)
     @app.callback(
@@ -939,29 +951,42 @@ def register_processing_callbacks(app):
         return fig, json_lib.dumps(y_json, indent=2), json_lib.dumps(x_json, indent=2), f"{metric} (Y) Treatment Profile"
     
     # 2.6 Render Feature Analysis Graph
-    # 2.6 Render Feature Analysis Graph
     @app.callback(
-        Output("features-graph", "figure"),
+        Output("features-graph", "figure"), # Artifacts ID
         Input("predictions-store", "data"),
         prevent_initial_call=True,
     )
     def render_features_analysis(preds):
-        if not preds: return go.Figure()
+        if not preds: 
+            return go.Figure()
+        
         try:
             sheet = next(iter(preds.keys()))
             metric = next(iter(preds[sheet]["metrics"].keys()))
             metric_data = preds[sheet]["metrics"][metric]
             records = metric_data.get("records", [])
             
+            if not records:
+                return go.Figure()
+            
             df = pd.DataFrame(records)
-            standard_cols = ["Date", "TrainActual", "TrainRaw", "TestActual", "TestPrediction", "Forecast"]
-            feature_cols = [c for c in df.columns if c not in standard_cols]
+            
+            # Define result columns to ignore so we can find ALL features
+            non_feature_cols = [
+                "Date", "TrainActual", "TrainRaw", "TestActual", 
+                "TestPrediction", "Forecast", "Is_Holiday"
+            ]
+            
+            # Identify features (will include internal lags like lag_1, roll_mean_7)
+            feature_cols = [c for c in df.columns if c not in non_feature_cols]
 
-            if feature_cols:
-                return generate_multivariate_feature_analysis(records, metric, feature_cols)
-            else:
-                return generate_feature_heatmap(records, metric)
-        except: return go.Figure()
+            # ALWAYS call the multivariate analysis for Artifacts
+            # If feature_cols is empty, the function itself will handle the error message
+            return generate_multivariate_feature_analysis(records, metric, feature_cols)
+                
+        except Exception as e:
+            print(f"Artifacts Feature Graph Error: {e}")
+            return go.Figure().update_layout(title=f"Error: {str(e)}")
     
     # ------------------------------------------------------------------
     #  4. RENDER HOLIDAY ANALYSIS (COMBINED DASHBOARD)
@@ -973,9 +998,10 @@ def register_processing_callbacks(app):
         State("select-sheet-target", "value"),
         State("select-col-target", "value"),
         State("store-feature-dfs", "data"),
+        State("select-region-config", "value"),
         prevent_initial_call=True
     )
-    def render_holiday_analysis(n_clicks, target_store, target_sheet, target_col, feature_store):
+    def render_holiday_analysis(n_clicks, target_store, target_sheet, target_col, feature_store, selected_regions):
         if not n_clicks or not target_store:
             return no_update
 
@@ -999,11 +1025,12 @@ def register_processing_callbacks(app):
             if df_merged is None:
                 df_merged = df_y[[target_col]].reset_index()
 
-            # 2. Holiday Detection (US & India)
-            import holidays
-            us_h = holidays.US(); in_h = holidays.India()
-            df_merged["Is_Holiday"] = df_merged[date_col_y].apply(lambda x: 1 if x in us_h or x in in_h else 0)
-            df_merged["Holiday_Name"] = df_merged[date_col_y].apply(lambda x: us_h.get(x) or in_h.get(x))
+            # 2. Holiday Detection 
+            regions = selected_regions if selected_regions else ['US', 'IN']
+            dynamic_holidays = get_region_holidays(df_merged[date_col_y], selected_regions)
+
+            df_merged["Is_Holiday"] = df_merged[date_col_y].apply(lambda x: 1 if x in dynamic_holidays else 0)
+            df_merged["Holiday_Name"] = df_merged[date_col_y].apply(lambda x: dynamic_holidays.get(x))
 
             # 3. Generate Visuals from Services
             
