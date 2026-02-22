@@ -55,7 +55,7 @@ def main():
     register_processing_callbacks(app)
     logger.info("Processing callbacks registered.")
 
-    app.run(debug=True, port=8081, use_reloader=False)
+    app.run(debug=True, port=8080, use_reloader=False)
 
 if __name__ == "__main__":
     main()
