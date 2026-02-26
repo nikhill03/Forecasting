@@ -58,24 +58,34 @@ def create_layout():
             # Main container
             dmc.Container(
                 fluid=True,
-                py="xs",
+                p=0,
                 children=[
                     
                     # 1. TOOLBAR
                     create_toolbar(),
                     
-                    dmc.Space(h="sm"),
+                    dmc.Space(h="xs"),
 
                     # 2. Main Content Area (Full Width)
-                    dmc.Paper(
-                        radius="lg", shadow="md", withBorder=True, p=0,
-                        style={"minHeight": "85vh", "backgroundColor": "white", "overflow": "hidden", "marginTop": "0px"},
+                    dmc.Box(
+                        id="main-content-wrapper",
+                        style={
+                            "minHeight": "85vh", 
+                            "backgroundColor": "white", 
+                            "width": "100%",
+                            "marginTop": "0px",
+                            # Move the shadow to CSS style
+                            "boxShadow": "0 4px 12px rgba(0, 0, 0, 0.05)", 
+                            "borderTop": "1px solid #eaeaea"
+                        },
                         children=[
                             dmc.Tabs(
                                 id="content-tabs",
-                                value="kyd", 
+                                value="console", 
                                 color="indigo",
                                 variant="pills",
+                                # Internal padding keeps content aligned with header
+                                style={"padding": "0 40px"},
                                 children=[
                                     
                                     # --- MAIN TABS LIST ---
@@ -83,9 +93,9 @@ def create_layout():
                                         p="sm",
                                         style={"borderBottom": "1px solid #f1f3f5", "backgroundColor": "#ffffff"},
                                         children=[
-                                            dmc.TabsTab("Know Your Data", value="kyd", leftSection=DashIconify(icon="carbon:data-view-alt", width=18)),
                                             dmc.TabsTab("Execution Console", value="console", leftSection=DashIconify(icon="carbon:terminal", width=18)),
                                             dmc.TabsTab("Forecast", value="graphs", id="tab-graphs", disabled=True, leftSection=DashIconify(icon="carbon:chart-line", width=18)),
+                                            dmc.TabsTab("Know Your Data", value="kyd", id="kyd-tab", disabled=True, leftSection=DashIconify(icon="carbon:data-view-alt", width=18)),
                                             dmc.TabsTab("Artifacts", value="artifacts", id="tab-artifacts", disabled=True, leftSection=DashIconify(icon="carbon:chart-relationship", width=18)),
                                         ]
                                     ),
@@ -97,26 +107,7 @@ def create_layout():
                                             dmc.Stack(
                                                 p="xl", gap="xl",
                                                 children=[
-                                                    # 1. Top Control Bar
-                                                    dmc.Group(
-                                                        justify="space-between",
-                                                        children=[
-                                                            dmc.Stack(gap=0, children=[
-                                                                dmc.Text("Data Diagnosis & Health Check", size="xl", fw=800, style={"color": "#1c1e21"}),
-                                                            ]),
-                                                            dmc.Button(
-                                                                "Generate Analysis",
-                                                                id="btn-check-health",
-                                                                size="md",
-                                                                radius="md",
-                                                                leftSection=DashIconify(icon="carbon:chart-evaluation", width=20)
-                                                            ),
-                                                        ]
-                                                    ),
-                                                    
-                                                    dmc.Divider(),
-
-                                                    # 2. LANDING PAGE / EMPTY STATE
+                                                    # 1. LANDING PAGE / EMPTY STATE
                                                     dmc.Stack(
                                                         id="kyd-empty-state",
                                                         align="center",
@@ -138,97 +129,100 @@ def create_layout():
                                                         ]
                                                     ),
 
-                                                    # 3. MAIN CONTENT (Hidden Initially)
+                                                    # 2. MAIN CONTENT (Hidden Initially)
                                                     html.Div(
                                                         id="kyd-main-content",
                                                         style={"display": "none"},
                                                         children=[
-                                                            dmc.Tabs(
-                                                                color="indigo",
-                                                                variant="outline",
-                                                                radius="md",
-                                                                value="tab-x",
-                                                                children=[
-                                                                    dmc.TabsList([
-                                                                        dmc.TabsTab("Features Analysis (X)", value="tab-x", leftSection=DashIconify(icon="carbon:data-1", width=16)),
-                                                                        dmc.TabsTab("Target Analysis (Y)", value="tab-y", leftSection=DashIconify(icon="carbon:chart-line-data", width=16)),
-                                                                    ]),
+                                                            # Section Heading (Formerly in the manual button bar)
+                                                            dmc.Stack(gap="lg", children=[                                                                
+                                                                dmc.Tabs(
+                                                                    color="indigo",
+                                                                    variant="outline",
+                                                                    radius="md",
+                                                                    value="tab-x",
+                                                                    children=[
+                                                                        dmc.TabsList([
+                                                                            dmc.TabsTab("Features Analysis (X)", value="tab-x", leftSection=DashIconify(icon="carbon:data-1", width=16)),
+                                                                            dmc.TabsTab("Target Analysis (Y)", value="tab-y", leftSection=DashIconify(icon="carbon:chart-line-data", width=16)),
+                                                                        ]),
 
-                                                                    # --- X-TAB CONTENT ---
-                                                                    dmc.TabsPanel(
-                                                                        value="tab-x",
-                                                                        pt="lg",
-                                                                        children=[
-                                                                            dmc.Tabs(
-                                                                                value="x-holiday",
-                                                                                variant="pills",
-                                                                                color="blue",
-                                                                                children=[
-                                                                                    dmc.TabsList([
-                                                                                        dmc.TabsTab("Holiday Analysis", value="x-holiday", leftSection=DashIconify(icon="carbon:event", width=16)),
-                                                                                        dmc.TabsTab("Data Statistics", value="x-health", leftSection=DashIconify(icon="carbon:report-data", width=16)),
-                                                                                        dmc.TabsTab("Collinearity", value="x-collinear", leftSection=DashIconify(icon="carbon:heat-map", width=16)),
-                                                                                        dmc.TabsTab("X Distribution", value="x-dist", leftSection=DashIconify(icon="carbon:histogram", width=16)),
-                                                                                    ]),
-                                                                                    dmc.Space(h="md"),
-                                                                                    
-                                                                                    dmc.TabsPanel(
-                                                                                        value="x-holiday", 
-                                                                                        children=[
+                                                                        # --- X-TAB CONTENT ---
+                                                                        dmc.TabsPanel(
+                                                                            value="tab-x",
+                                                                            pt="lg",
+                                                                            children=[
+                                                                                dmc.Tabs(
+                                                                                    value="x-holiday",
+                                                                                    variant="pills",
+                                                                                    color="blue",
+                                                                                    children=[
+                                                                                        dmc.TabsList([
+                                                                                            dmc.TabsTab("Holiday Analysis", value="x-holiday", leftSection=DashIconify(icon="carbon:event", width=16)),
+                                                                                            dmc.TabsTab("Data Statistics", value="x-health", id="tab-x-health", leftSection=DashIconify(icon="carbon:report-data", width=16)),
+                                                                                            dmc.TabsTab("Collinearity", value="x-collinear", id="tab-x-collinear", leftSection=DashIconify(icon="carbon:heat-map", width=16)),
+                                                                                            dmc.TabsTab("X Distribution", value="x-dist", id="tab-x-dist", leftSection=DashIconify(icon="carbon:histogram", width=16)),
+                                                                                        ]),
+                                                                                        dmc.Space(h="md"),
+                                                                                        
+                                                                                        dmc.TabsPanel(
+                                                                                            value="x-holiday", 
+                                                                                            children=[
+                                                                                                elevated_card(
+                                                                                                    id_val="kyd-holiday-container", 
+                                                                                                    children=html.Div(id="kyd-holiday-container"), 
+                                                                                                    height="auto", 
+                                                                                                    overflow="visible" 
+                                                                                                )
+                                                                                            ]
+                                                                                        ),
+                                                                                        dmc.TabsPanel(value="x-health", children=[
                                                                                             elevated_card(
-                                                                                                id_val="kyd-holiday-container", 
-                                                                                                children=html.Div(id="kyd-holiday-container"), # Ensure ID is present
-                                                                                                height="auto", 
-                                                                                                overflow="visible" # Fix for rendering issues
+                                                                                                children=html.Div(id="health-check-content"),
+                                                                                                height="450px"
                                                                                             )
-                                                                                        ]
-                                                                                    ),
-                                                                                    dmc.TabsPanel(value="x-health", children=[
-                                                                                        elevated_card(
-                                                                                            children=html.Div(id="health-check-content"), # ID restored here
-                                                                                            height="450px"
-                                                                                        )
-                                                                                    ]),
-                                                                                    dmc.TabsPanel(value="x-collinear", children=[elevated_card(children=dcc.Graph(id="kyd-features-graph", responsive=True, style={"height": "100%"}))]),
-                                                                                    dmc.TabsPanel(value="x-dist", children=[
-                                                                                        dmc.Group(justify="flex-end", mb="xs", children=[dmc.RadioGroup(id="kyd-x-plot-type", value="histogram", size="sm", children=dmc.Group(gap="md", children=[dmc.Radio(label="Histogram", value="histogram"), dmc.Radio(label="Box Plot", value="boxplot"), dmc.Radio(label="Scatter Plot", value="scatterplot")]))]),
-                                                                                        elevated_card(children=dcc.Graph(id="kyd-x-distribution-graph", responsive=True, style={"height": "100%"}))
-                                                                                    ]),
-                                                                                ]
-                                                                            )
-                                                                        ]
-                                                                    ),
+                                                                                        ]),
+                                                                                        dmc.TabsPanel(value="x-collinear", children=[elevated_card(children=dcc.Graph(id="kyd-features-graph", responsive=True, style={"height": "100%"}))]),
+                                                                                        dmc.TabsPanel(value="x-dist", children=[
+                                                                                            dmc.Group(justify="flex-end", mb="xs", children=[dmc.RadioGroup(id="kyd-x-plot-type", value="histogram", size="sm", children=dmc.Group(gap="md", children=[dmc.Radio(label="Histogram", value="histogram"), dmc.Radio(label="Box Plot", value="boxplot"), dmc.Radio(label="Scatter Plot", value="scatterplot")]))]),
+                                                                                            elevated_card(children=dcc.Graph(id="kyd-x-distribution-graph", responsive=True, style={"height": "100%"}))
+                                                                                        ]),
+                                                                                    ]
+                                                                                )
+                                                                            ]
+                                                                        ),
 
-                                                                    # --- Y-TAB CONTENT ---
-                                                                    dmc.TabsPanel(
-                                                                        value="tab-y",
-                                                                        pt="lg",
-                                                                        children=[
-                                                                            dmc.Tabs(
-                                                                                value="y-stat",
-                                                                                variant="pills",
-                                                                                color="orange",
-                                                                                children=[
-                                                                                    dmc.TabsList([
-                                                                                        dmc.TabsTab("Stationarity", value="y-stat"),
-                                                                                        dmc.TabsTab("Decomposition", value="y-decomp"),
-                                                                                        dmc.TabsTab("Lag Analysis", value="y-acf"),
-                                                                                        dmc.TabsTab("Y Distribution", value="y-dist"),
-                                                                                    ]),
-                                                                                    dmc.Space(h="md"),
-                                                                                    dmc.TabsPanel(value="y-stat", children=[elevated_card(children=dcc.Graph(id="kyd-stationarity-graph", responsive=True, style={"height": "100%"}))]),
-                                                                                    dmc.TabsPanel(value="y-decomp", children=[elevated_card(children=dcc.Graph(id="kyd-decomposition-graph", responsive=True, style={"minHeight": "800px"}), overflow="auto")]),
-                                                                                    dmc.TabsPanel(value="y-acf", children=[elevated_card(children=dcc.Graph(id="kyd-acf-pacf-graph", responsive=True, style={"height": "100%"}))]),
-                                                                                    dmc.TabsPanel(value="y-dist", children=[
-                                                                                        dmc.Group(justify="flex-end", mb="xs", children=[dmc.RadioGroup(id="kyd-y-plot-type", value="histogram", size="sm", children=dmc.Group(gap="md", children=[dmc.Radio(label="Histogram", value="histogram"), dmc.Radio(label="Box Plot", value="boxplot"), dmc.Radio(label="Scatter Plot", value="scatterplot")]))]),
-                                                                                        elevated_card(children=dcc.Graph(id="kyd-y-distribution-graph", responsive=True, style={"height": "100%"}))
-                                                                                    ]),
-                                                                                ]
-                                                                            )
-                                                                        ]
-                                                                    ),
-                                                                ]
-                                                            )
+                                                                        # --- Y-TAB CONTENT ---
+                                                                        dmc.TabsPanel(
+                                                                            value="tab-y",
+                                                                            pt="lg",
+                                                                            children=[
+                                                                                dmc.Tabs(
+                                                                                    value="y-stat",
+                                                                                    variant="pills",
+                                                                                    color="orange",
+                                                                                    children=[
+                                                                                        dmc.TabsList([
+                                                                                            dmc.TabsTab("Stationarity", value="y-stat"),
+                                                                                            dmc.TabsTab("Decomposition", value="y-decomp"),
+                                                                                            dmc.TabsTab("Lag Analysis", value="y-acf"),
+                                                                                            dmc.TabsTab("Y Distribution", value="y-dist"),
+                                                                                        ]),
+                                                                                        dmc.Space(h="md"),
+                                                                                        dmc.TabsPanel(value="y-stat", children=[elevated_card(children=dcc.Graph(id="kyd-stationarity-graph", responsive=True, style={"height": "100%"}))]),
+                                                                                        dmc.TabsPanel(value="y-decomp", children=[elevated_card(children=dcc.Graph(id="kyd-decomposition-graph", responsive=True, style={"minHeight": "800px"}), overflow="auto")]),
+                                                                                        dmc.TabsPanel(value="y-acf", children=[elevated_card(children=dcc.Graph(id="kyd-acf-pacf-graph", responsive=True, style={"height": "100%"}))]),
+                                                                                        dmc.TabsPanel(value="y-dist", children=[
+                                                                                            dmc.Group(justify="flex-end", mb="xs", children=[dmc.RadioGroup(id="kyd-y-plot-type", value="histogram", size="sm", children=dmc.Group(gap="md", children=[dmc.Radio(label="Histogram", value="histogram"), dmc.Radio(label="Box Plot", value="boxplot"), dmc.Radio(label="Scatter Plot", value="scatterplot")]))]),
+                                                                                            elevated_card(children=dcc.Graph(id="kyd-y-distribution-graph", responsive=True, style={"height": "100%"}))
+                                                                                        ]),
+                                                                                    ]
+                                                                                )
+                                                                            ]
+                                                                        ),
+                                                                    ]
+                                                                )
+                                                            ])
                                                         ]
                                                     )
                                                 ]
@@ -241,86 +235,116 @@ def create_layout():
                                         value="console",
                                         children=[
                                             dmc.Stack(
-                                                gap="sm", p="xl", style={"height": "80vh"},
+                                                p="xl", style={"height": "80vh"},
                                                 children=[
-                                                    # Header Section: Status and Steps side-by-side
-                                                    dmc.Group(
-                                                        justify="space-between", align="center",
+                                                    
+                                                    # 1. CONSOLE LANDING PAGE (Visible by default)
+                                                    dmc.Stack(
+                                                        id="console-empty-state",
+                                                        align="center",
+                                                        justify="center",
+                                                        style={"height": "100%", "display": "flex", "borderRadius": "20px"},
+                                                        gap="xl",
                                                         children=[
+                                                            html.Div(
+                                                                style={
+                                                                    "background": "linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)",
+                                                                    "padding": "40px",
+                                                                    "borderRadius": "50%",
+                                                                },
+                                                                children=DashIconify(icon="carbon:terminal", width=100, color="#1a73e8")
+                                                            ),
+                                                            dmc.Stack(gap=5, align="center", children=[
+                                                                dmc.Text("Upload data to Generate Forecast", size="28px", fw=800, className="gradient-text"),
+                                                            ]),
+                                                        ]
+                                                    ),
+
+                                                    # 2. ACTIVE CONSOLE CONTENT (Hidden until 'Run Forecast' is clicked)
+                                                    dmc.Stack(
+                                                        id="console-main-content",
+                                                        gap="sm", 
+                                                        style={"display": "none", "height": "100%"}, # Controlled by callback
+                                                        children=[
+                                                            # Header Section: Status and Steps side-by-side
                                                             dmc.Group(
-                                                                align="center", gap="md",
+                                                                justify="space-between", align="center",
                                                                 children=[
-                                                                    dmc.Text("Execution Status", fw=700, size="md", style={"color": "#1c1e21"}),
                                                                     dmc.Group(
-                                                                        gap="sm", 
-                                                                        align="center",
+                                                                        align="center", gap="md",
                                                                         children=[
-                                                                            dmc.Progress(
-                                                                                id="processing-progress", 
-                                                                                value=0, 
-                                                                                size="sm", 
-                                                                                color="indigo", 
-                                                                                style={"width": 260, "transition": "width 0.5s ease"}
+                                                                            dmc.Text("Execution Status", fw=700, size="md", style={"color": "#1c1e21"}),
+                                                                            dmc.Group(
+                                                                                gap="sm", 
+                                                                                align="center",
+                                                                                children=[
+                                                                                    dmc.Progress(
+                                                                                        id="processing-progress", 
+                                                                                        value=0, 
+                                                                                        size="sm", 
+                                                                                        color="indigo", 
+                                                                                        style={"width": 260, "transition": "width 0.5s ease"}
+                                                                                    ),
+                                                                                    dmc.Text(id="progress-text", size="xs", fw=500, c="dimmed"),
+                                                                                ]
                                                                             ),
-                                                                            # Progress text moved beside the bar
-                                                                            dmc.Text(id="progress-text", size="xs", fw=500, c="dimmed"),
-                                                                        ]
+                                                                        ],
+                                                                    ),
+                                                                    dmc.Group(
+                                                                        gap="xs",
+                                                                        children=[
+                                                                            dmc.Button(
+                                                                                "Download Logs", 
+                                                                                id="btn-download-log", 
+                                                                                variant="light",
+                                                                                color="gray",
+                                                                                size="xs", 
+                                                                                radius="md",
+                                                                                leftSection=DashIconify(icon="carbon:download", width=14)
+                                                                            ),
+                                                                            dmc.ActionIcon(
+                                                                                id="btn-stop", 
+                                                                                variant="filled", 
+                                                                                color="red", 
+                                                                                size="lg", 
+                                                                                radius="md",
+                                                                                style={"boxShadow": "0 4px 12px rgba(255, 77, 79, 0.2)"},
+                                                                                children=DashIconify(icon="carbon:stop-filled", width=16)
+                                                                            ),
+                                                                            dmc.ActionIcon(
+                                                                                id="btn-restart", 
+                                                                                variant="filled", 
+                                                                                color="orange", 
+                                                                                size="lg", 
+                                                                                radius="md",
+                                                                                style={"boxShadow": "0 4px 12px rgba(255, 169, 64, 0.2)"},
+                                                                                children=DashIconify(icon="carbon:restart", width=16)
+                                                                            ),
+                                                                        ],
                                                                     ),
                                                                 ],
                                                             ),
-                                                            dmc.Group(
-                                                                gap="xs",
-                                                                children=[
-                                                                    dmc.Button(
-                                                                        "Download Logs", 
-                                                                        id="btn-download-log", 
-                                                                        variant="light",
-                                                                        color="gray",
-                                                                        size="xs", 
-                                                                        radius="md",
-                                                                        leftSection=DashIconify(icon="carbon:download", width=14)
-                                                                    ),
-                                                                    dmc.ActionIcon(
-                                                                        id="btn-stop", 
-                                                                        variant="filled", 
-                                                                        color="red", 
-                                                                        size="lg", 
-                                                                        radius="md",
-                                                                        style={"boxShadow": "0 4px 12px rgba(255, 77, 79, 0.2)"},
-                                                                        children=DashIconify(icon="carbon:stop-filled", width=16)
-                                                                    ),
-                                                                    dmc.ActionIcon(
-                                                                        id="btn-restart", 
-                                                                        variant="filled", 
-                                                                        color="orange", 
-                                                                        size="lg", 
-                                                                        radius="md",
-                                                                        style={"boxShadow": "0 4px 12px rgba(255, 169, 64, 0.2)"},
-                                                                        children=DashIconify(icon="carbon:restart", width=16)
-                                                                    ),
-                                                                ],
+                                                            
+                                                            # Terminal Surface
+                                                            dmc.Paper(
+                                                                id="console-output", 
+                                                                radius="md", 
+                                                                p="sm", 
+                                                                withBorder=True,
+                                                                style={
+                                                                    "height": "calc(100% - 56px)", 
+                                                                    "backgroundColor": "#111214", 
+                                                                    "color": "#e6eef8", 
+                                                                    "fontFamily": "monospace", 
+                                                                    "fontSize": "12px", 
+                                                                    "overflowY": "auto", 
+                                                                    "whiteSpace": "pre-wrap",
+                                                                    "border": "1px solid #2d2e32"
+                                                                },
                                                             ),
                                                         ],
-                                                    ),
-                                                    
-                                                    # Terminal Surface
-                                                    dmc.Paper(
-                                                        id="console-output", 
-                                                        radius="md", 
-                                                        p="sm", 
-                                                        withBorder=True,
-                                                        style={
-                                                            "height": "calc(100% - 56px)", 
-                                                            "backgroundColor": "#111214", 
-                                                            "color": "#e6eef8", 
-                                                            "fontFamily": "monospace", 
-                                                            "fontSize": "12px", 
-                                                            "overflowY": "auto", 
-                                                            "whiteSpace": "pre-wrap",
-                                                            "border": "1px solid #2d2e32"
-                                                        },
-                                                    ),
-                                                ],
+                                                    )
+                                                ]
                                             )
                                         ],
                                     ),
@@ -429,7 +453,6 @@ def create_layout():
                                                         value="treatment",
                                                         children=[
                                                             elevated_card(height="auto", overflow="auto", children=[
-                                                                dmc.Text("Data Treatment Analysis (Before vs After)", fw=700, size="lg", mb="sm"),
                                                                 dcc.Graph(id="treatment-graph", responsive=True, style={"minHeight": "400px"}),
                                                                 dmc.Grid([
                                                                     dmc.GridCol(
