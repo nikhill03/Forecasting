@@ -64,8 +64,6 @@ def create_toolbar():
             "alignItems": "center"
         },
         children=dmc.Group(
-            # REMOVED CONTAINER: Content now touches the left wall
-            # px="xl" matches the padding used in your header.py container
             style={"width": "100%", "padding": "0 40px"}, 
             justify="space-between",
             align="center",
@@ -78,7 +76,7 @@ def create_toolbar():
                     children=[
                         # Section 1: Data Sources
                         clean_upload_btn("Upload Target (Y)", "upload-target", "filename-target", "carbon:chart-line-data"),
-                        clean_upload_btn("Upload Features (X)", "upload-features", "filename-features", "carbon:data-1"),
+                        clean_upload_btn("Upload Variables (X)", "upload-features", "filename-features", "carbon:data-1"),
 
                         dmc.Divider(orientation="vertical", h=32, color="#dee2e6", mx="sm"),
 
