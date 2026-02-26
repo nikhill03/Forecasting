@@ -4,45 +4,39 @@ from dash_iconify import DashIconify
 
 def create_toolbar():
     
-    # Helper for clean upload buttons (Modern Chip Style)
+    # Helper for clean upload buttons
     def clean_upload_btn(label, upload_id, filename_id, icon="carbon:document-add"):
         return dmc.Box( 
-            style={
-                "position": "relative", 
-                "paddingBottom": "16px",
-                "display": "flex", 
-                "flexDirection": "column", 
-                "alignItems": "center",
-                "justifyContent": "center"
-            }, 
+            style={"position": "relative", "display": "flex", "alignItems": "center"}, 
             children=[
                  dcc.Upload(
                     id=upload_id,
                     children=dmc.Group([
-                        DashIconify(icon=icon, width=16, color="#1a73e8"), 
-                        dmc.Text(label, size="sm", fw=600, c="#3c4043")
+                        DashIconify(icon=icon, width=16, color="var(--primary-blue)"), 
+                        dmc.Text(label, fz="sm", fw=600, c="#3c4043")
                     ], gap="xs"),
                     accept=".xlsx,.xls,.csv",
                     multiple=False,
                     style={
-                        "padding": "8px 16px",
+                        "padding": "0 16px",
                         "borderRadius": "8px",
-                        "border": "1px solid #e9ecef",
-                        "backgroundColor": "#f8f9fa",
+                        "border": "1px solid #dee2e6",
+                        "backgroundColor": "var(--surface-bg)",
                         "cursor": "pointer",
                         "transition": "all 0.2s ease",
                         "display": "flex",
-                        "alignItems": "center"
+                        "alignItems": "center",
+                        "height": "36px"
                     },
                 ),
                 dmc.Text(
                     id=filename_id, 
-                    size="10px", 
-                    c="blue.6", 
+                    fz="10px", 
+                    c="var(--primary-blue)", 
                     fw=500,
                     style={
                         "position": "absolute", 
-                        "bottom": "-4px",
+                        "bottom": "-14px",
                         "left": "4px",
                         "maxWidth": "140px", 
                         "whiteSpace": "nowrap", 
@@ -55,128 +49,126 @@ def create_toolbar():
 
     return dmc.Paper(
         shadow="sm", 
-        radius=0,        # FIXED: Removed radius for full-width look
+        radius=0,
         p="xs",     
-        mx=0,            # FIXED: Removed horizontal margins
         style={
             "backgroundColor": "rgba(255, 255, 255, 0.9)", 
             "backdropFilter": "blur(10px)",
-            "borderBottom": "1px solid #eaeaea", # Border only on bottom for seamless flow
+            "borderBottom": "1px solid #dee2e6",
             "position": "sticky", 
-            "top": "70px", # Matches your header height
+            "top": "0px", 
             "zIndex": 99,
-            "marginTop": "0px",
-            "width": "100%" # Ensures it stretches to screen edges
+            "width": "100%",
+            "height": "75px",
+            "display": "flex",
+            "alignItems": "center"
         },
-        children=dmc.Container( # Container inside to maintain content alignment
-            fluid=True,
-            px="xl", # Matches the padding of your Header
-            children=dmc.Group(
-                justify="space-between",
-                align="center",
-                children=[
-                    
-                    # --- SECTION 1: DATA SOURCES ---
-                    dmc.Group(
-                        gap="lg", 
-                        children=[
-                            dmc.Group(
-                                gap="sm", 
-                                align="center",
-                                children=[
-                                    clean_upload_btn("Upload Target (Y)", "upload-target", "filename-target", "carbon:chart-line-data"),
-                                    clean_upload_btn("Upload Features (X)", "upload-features", "filename-features", "carbon:data-1"),
-                                ]
-                            )
-                        ]
-                    ),
+        children=dmc.Group(
+            # REMOVED CONTAINER: Content now touches the left wall
+            # px="xl" matches the padding used in your header.py container
+            style={"width": "100%", "padding": "0 40px"}, 
+            justify="space-between",
+            align="center",
+            children=[
+                
+                # --- ALL INPUTS LEFT-ALIGNED TOGETHER ---
+                dmc.Group(
+                    gap="md", 
+                    align="center",
+                    children=[
+                        # Section 1: Data Sources
+                        clean_upload_btn("Upload Target (Y)", "upload-target", "filename-target", "carbon:chart-line-data"),
+                        clean_upload_btn("Upload Features (X)", "upload-features", "filename-features", "carbon:data-1"),
 
-                    # --- SECTION 2: CONFIGURATION ---
-                    dmc.Group(gap="md", align="center", children=[
-                        dmc.Divider(orientation="vertical", h=32, color="gray.2"),
+                        dmc.Divider(orientation="vertical", h=32, color="#dee2e6", mx="sm"),
+
+                        # Section 2: Configuration
                         dmc.Select(
                             id="select-sheet-target",
-                            placeholder="Select Worksheet",
+                            placeholder="Worksheet",
                             data=[],
                             disabled=True,
-                            style={"width": 170},
-                            size="sm",
+                            style={"width": 160},
                             radius="md",
                             variant="filled",
-                            leftSection=DashIconify(icon="carbon:table", width=14, color="#1a73e8")
+                            leftSection=DashIconify(icon="carbon:table", width=14, color="var(--primary-blue)")
                         ),
                         dmc.Select(
                             id="select-col-target",
-                            placeholder="Select Target Metric",
+                            placeholder="Target Metric",
                             data=[],
                             disabled=True,
                             style={"width": 180},
-                            size="sm",
                             radius="md",
                             variant="filled",
-                            leftSection=DashIconify(icon="carbon:column", width=14, color="#1a73e8")
+                            leftSection=DashIconify(icon="carbon:column", width=14, color="var(--primary-blue)")
                         ),
                         dmc.NumberInput(
                             id="forecast-horizon-input",
-                            placeholder="Horizon (Days)",
+                            placeholder="Horizon",
                             min=1, max=365,
-                            style={"width": 140},
-                            size="sm",
+                            style={"width": 110},
                             radius="md",
                             variant="filled",
-                            leftSection=DashIconify(icon="carbon:time", width=14, color="#1a73e8")
+                            leftSection=DashIconify(icon="carbon:time", width=14, color="var(--primary-blue)")
                         ),
                         dmc.MultiSelect(
                             id="select-region-config",
-                            placeholder="Select Region(s)",
+                            # Initial state shows the placeholder
+                            placeholder="Select Region(s)", 
                             data=[
                                 {"label": "United States", "value": "US"},
                                 {"label": "India", "value": "IN"}
                             ],
                             value=[], 
                             hidePickedOptions=True,
-                            searchable=True,
+                            searchable=False,  
                             clearable=True,
-                            style={"width": 250},
-                            size="sm",
                             radius="md",
                             variant="filled",
-                            leftSection=DashIconify(icon="carbon:location", width=14, color="#1a73e8"),
+                            leftSection=DashIconify(icon="carbon:location", width=14, color="var(--primary-blue)"),
+                            style={
+                                "width": "auto",
+                                "minWidth": "160px",
+                                "maxWidth": "450px", 
+                            },
                             styles={
                                 "input": {
-                                    "backgroundColor": "#f1f3f5",
-                                    "border": "none",
                                     "height": "36px",
                                     "minHeight": "36px",
-                                    "overflow": "hidden"
+                                    # This ensures no hidden input text interferes with visibility
+                                    "textIndent": "0px", 
                                 },
                                 "values": {
-                                    "height": "100%",
-                                    "alignContent": "center",
-                                    "flexWrap": "nowrap",
-                                    "overflowX": "auto"
+                                    "flexWrap": "nowrap", 
+                                    "overflowX": "auto",  
+                                    "scrollbarWidth": "none",
                                 },
-                                "searchInput": { "display": "none" }
+                                # Specifically target the placeholder text to ensure it clears
+                                "placeholder": {
+                                    "display": "block", # Ensure it's visible initially
+                                }
                             }
                         ),
-                    ]),
+                    ]
+                ),
 
-                    # --- SECTION 3: ACTIONS ---
-                    dmc.Group(gap="sm", align="center", children=[
-                        dmc.Divider(orientation="vertical", h=32, color="gray.2"),
-                        dmc.Button(
-                            "Run Forecast",
-                            id="run-models-btn",
-                            className="gradient-button",
-                            disabled=False,
-                            leftSection=DashIconify(icon="carbon:play-filled", width=18),
-                            size="sm",
-                            radius="md",
-                            px="xl",
-                            style={"fontWeight": 700}
-                        ),
-                    ])
-                ]
-            )
+                # --- ACTION GROUP RIGHT-ALIGNED ---
+                dmc.Button(
+                    "Run Forecast",
+                    id="run-models-btn",
+                    leftSection=DashIconify(icon="carbon:play-filled", width=18),
+                    radius="md",
+                    px="xl",
+                    style={
+                        "background": "var(--primary-gradient)",
+                        "fontWeight": 700,
+                        "border": "none",
+                        "color": "white",
+                        "height": "42px",
+                        "boxShadow": "0 4px 12px rgba(26, 115, 232, 0.3)"
+                    }
+                )
+            ]
         )
     )
