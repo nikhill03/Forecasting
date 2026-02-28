@@ -111,40 +111,38 @@ def create_toolbar():
                             leftSection=DashIconify(icon="carbon:time", width=14, color="var(--primary-blue)")
                         ),
                         dmc.MultiSelect(
-                            id="select-region-config",
-                            # Initial state shows the placeholder
-                            placeholder="Select Region(s)", 
+                            id="region-select",
+                            className="dmc-docs-demo", # Applied directly to component
+                            placeholder="Select Region(s)",
                             data=[
-                                {"label": "United States", "value": "US"},
-                                {"label": "India", "value": "IN"}
+                                {"label": "United States (US)", "value": "US"},
+                                {"label": "India (IN)", "value": "IN"}
                             ],
                             value=[], 
-                            hidePickedOptions=True,
-                            searchable=False,  
+                            searchable=True,
                             clearable=True,
+                            hidePickedOptions=True,
                             radius="md",
                             variant="filled",
                             leftSection=DashIconify(icon="carbon:location", width=14, color="var(--primary-blue)"),
                             style={
-                                "width": "auto",
-                                "minWidth": "160px",
-                                "maxWidth": "450px", 
+                                "minWidth": "200px",
+                                "maxWidth": "450px",
+                                "width": "fit-content",
+                                "flex": "0 1 auto",
                             },
                             styles={
                                 "input": {
-                                    "height": "36px",
-                                    "minHeight": "36px",
-                                    # This ensures no hidden input text interferes with visibility
-                                    "textIndent": "0px", 
+                                    "height": "42px", 
+                                    "minHeight": "42px",
+                                    "backgroundColor": "#f1f3f5", 
+                                    "border": "none",
+                                    "display": "flex",
+                                    "alignItems": "center"
                                 },
                                 "values": {
-                                    "flexWrap": "nowrap", 
-                                    "overflowX": "auto",  
-                                    "scrollbarWidth": "none",
-                                },
-                                # Specifically target the placeholder text to ensure it clears
-                                "placeholder": {
-                                    "display": "block", # Ensure it's visible initially
+                                    "flexWrap": "nowrap",
+                                    "gap": "8px",
                                 }
                             }
                         ),
