@@ -14,12 +14,14 @@ import pandas as pd
 import plotly.graph_objects as go
 from dash import Input, Output, State, dcc, html, callback_context, no_update
 from dash.exceptions import PreventUpdate
+from dash import Input, Output, callback
 
 import plotly.subplots as sp
 from services.processing_engine import HISTORY_LOG, PROGRESS_JSON  
 from utils.holiday_utils import get_region_holidays
 
 from services.data_handling import DataHandling 
+from utils.holiday_utils import get_region_holidays
 
 from services.forecast_artifact import (
     generate_experiment_figure, generate_health_summary_table, generate_seasonality_figure, generate_stationarity_figure,
@@ -190,6 +192,8 @@ def register_processing_callbacks(app):
     # 4. MAIN CONTROL RUN (MERGE & EXECUTE)
     # =================================================
     @app.callback(
+        Output("console-empty-state", "style"),
+        Output("console-main-content", "style"),
         Output("log-interval", "disabled"),
         Output("log-store", "data"),
         Output("console-output", "children"),
@@ -197,27 +201,24 @@ def register_processing_callbacks(app):
         Output("graph-store", "data"),
         Output("content-tabs", "value"),
         
-        Input("run-models-btn", "n_clicks"),
+        Input("run-models-btn", "n_clicks"), 
         Input("btn-stop", "n_clicks"),
         Input("btn-restart", "n_clicks"),
         Input("log-interval", "n_intervals"),
         Input("clear-graph", "n_clicks"),
         
-        # Data Inputs
         State("store-target-dfs", "data"),
         State("select-sheet-target", "value"),
         State("select-col-target", "value"),
         State("store-feature-dfs", "data"),
-        
-        # Config Inputs
         State("forecast-horizon-input", "value"),
-        State("select-region-config", "value"),
-
+        State("region-select", "value"),
+        State("test-window-select", "value"), 
         prevent_initial_call=True
     )
     def control_run(n_click, stop_click, restart_click, n_int, clear_click,
                     target_store, target_sheet, target_col, 
-                    feature_store, horizon, selected_regions):
+                    feature_store, horizon, selected_regions, test_window):
         
         global WORKER_THREAD
         global IN_MEMORY_LOGS
@@ -226,134 +227,99 @@ def register_processing_callbacks(app):
         trigger = ctx.triggered[0]["prop_id"].split(".")[0]
         log_store = IN_MEMORY_LOGS
         
+        SHOW_EMPTY = {"height": "100%", "display": "flex", "borderRadius": "20px"}
+        HIDE_EMPTY = {"display": "none"}
+        SHOW_CONSOLE = {"display": "flex", "flexDirection": "column", "height": "100%"}
+        HIDE_CONSOLE = {"display": "none"}
+
         # --- UI Interactions ---
         if trigger == "clear-graph":
             clear_all_outputs()
-            _append_log("Graph cleared.")
-            return True, log_store, _render_console_lines(log_store), {}, {}, no_update
+            return SHOW_EMPTY, HIDE_CONSOLE, True, [], _render_console_lines([]), {}, {}, no_update
 
         if trigger == "btn-stop":
-            # 1. Create the Stop Flag file
             try:
-                with open(STOP_FLAG, "w") as fh:
-                    fh.write("stop")
-            except Exception as e:
-                _append_log(f"Error triggering stop: {e}")
-
-            stop_msg = "🛑 Execution STOPPED by user request."
-            
-            # 2. WRITE TO DISK
-            _append_log(stop_msg) 
-
-            # 3. RELOAD FULL HISTORY
+                with open(STOP_FLAG, "w") as fh: fh.write("stop")
+            except: pass
+            _append_log("🛑 Execution STOPPED by user request.") 
             full_history = read_log_tail()
-            
-            # Sync global memory (Declaration already done at top)
             IN_MEMORY_LOGS = full_history[:]
-            
-            return True, full_history, _render_console_lines(full_history), no_update, no_update, no_update
+            return HIDE_EMPTY, SHOW_CONSOLE, True, full_history, _render_console_lines(full_history), no_update, no_update, no_update
         
-        # --- Log Polling ---
         if trigger == "log-interval":
             try:
-                progress = read_progress() or {}
                 preds, figs = read_predictions_and_figs()
                 tail = read_log_tail()
-
                 merged = IN_MEMORY_LOGS[:]
                 for l in tail:
                     if l not in merged: merged.append(l)
 
                 if preds and os.path.exists(DONE_FLAG):
-                    if not any("Execution Successful" in s for s in merged):
-                        merged.append(f"[{_now_ts()}] Execution Successful.")
-                    return True, merged, _render_console_lines(merged), preds, figs, no_update
-                
-                if preds:
-                    return False, merged, _render_console_lines(merged), preds, figs, no_update
-
-                return False, merged, _render_console_lines(merged), no_update, no_update, no_update
-            except:
-                pass
+                    return HIDE_EMPTY, SHOW_CONSOLE, True, merged, _render_console_lines(merged), preds, figs, no_update
+                return HIDE_EMPTY, SHOW_CONSOLE, False, merged, _render_console_lines(merged), preds, figs, no_update
+            except: pass
             return no_update
 
-        # --- RUN LOGIC ---
-        if trigger == "run-models-btn" or trigger == "btn-restart":
+        if trigger in ["run-models-btn", "btn-restart"]:
             
-            # Validation
-            if not target_store or not target_sheet or not target_col:
-                err = f"[{_now_ts()}] Error: Target data (File + Sheet + Column) is missing."
+            # 1. VALIDATION CHECK
+            missing = []
+            if not target_store or not target_sheet or not target_col: missing.append("Target Data")
+            if not horizon: missing.append("Forecast Horizon")
+            if not selected_regions or len(selected_regions) == 0: missing.append("Region Selection")
+
+            if missing:
+                err = f"[{_now_ts()}] ❌ Error: Missing {', '.join(missing)}."
                 _append_log(err)
-                return True, log_store + [err], _render_console_lines(log_store + [err]), {}, {}, no_update
+                return SHOW_EMPTY, HIDE_CONSOLE, True, log_store + [err], _render_console_lines(log_store + [err]), {}, {}, no_update
 
             try:
-                # 1. Prepare Target (Y)
+                # Get dynamic window size (Default to 30)
+                test_size = int(test_window) if test_window else 30
+
                 df_y = pd.read_json(target_store[target_sheet], orient='split')
                 date_col_y = next((c for c in df_y.columns if "date" in str(c).lower()), None)
-                
-                if not date_col_y: 
-                    raise ValueError("Target file missing Date column")
-                
                 df_y[date_col_y] = pd.to_datetime(df_y[date_col_y])
                 df_y = df_y.set_index(date_col_y).sort_index()
                 
-                # 2. Prepare Features (X) & Merge
                 df_merged = df_y[[target_col]].copy()
                 x_cols_list = []
-
                 if feature_store:
                     x_sheet = list(feature_store.keys())[0]
                     df_x = pd.read_json(feature_store[x_sheet], orient='split')
-                    
                     date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
-                    
                     if date_col_x:
                         df_x[date_col_x] = pd.to_datetime(df_x[date_col_x])
                         df_x = df_x.set_index(date_col_x).sort_index()
                         x_cols_raw = [c for c in df_x.columns if pd.api.types.is_numeric_dtype(df_x[c])]
                         df_merged = df_merged.join(df_x[x_cols_raw], how='left')
                         x_cols_list = x_cols_raw
-                        _append_log(f"Merged {len(x_cols_list)} features from X file.")
-                    else:
-                        _append_log("Warning: X file has no Date column. Skipping merge.")
 
-                # 3. Create "Virtual" CSV
                 csv_buffer = io.StringIO()
                 df_merged.reset_index().to_csv(csv_buffer, index=False)
-                csv_str = csv_buffer.getvalue()
-                b64_merged = base64.b64encode(csv_str.encode('utf-8')).decode('utf-8')
+                b64_merged = base64.b64encode(csv_buffer.getvalue().encode('utf-8')).decode('utf-8')
                 
-                # 4. CLEAR EVERYTHING & LAUNCH
                 clear_all_outputs()
-                IN_MEMORY_LOGS.clear() # Wipe global memory
+                IN_MEMORY_LOGS.clear() 
                 
                 def _thread_target():
                     try:
                         processing_worker(
-                            b64_merged, 
-                            ["Sheet1"],
-                            [target_col],
-                            selected_x_cols=x_cols_list,
-                            x_clean_weekday="median",
-                            x_clean_weekend="zero",
-                            forecast_horizon=int(horizon or 60),
+                            b64_merged, ["Sheet1"], [target_col],
+                            selected_x_cols=x_cols_list, forecast_horizon=int(horizon),
+                            test_window=test_size, # PASSED: New dynamic argument
                             selected_regions=selected_regions
                         )
-                    except Exception as e:
-                        _append_log(f"Worker Error: {str(e)}")
-                        traceback.print_exc()
+                    except Exception as e: _append_log(f"Worker Error: {str(e)}")
 
                 with WORKER_THREAD_LOCK:
                     WORKER_THREAD = threading.Thread(target=_thread_target, daemon=True)
                     WORKER_THREAD.start()
 
-                # FIX: Return empty list AND empty rendered lines to wipe console immediately
-                return False, [], _render_console_lines([]), {}, {}, "console"
+                return HIDE_EMPTY, SHOW_CONSOLE, False, [], _render_console_lines([]), {}, {}, "console"
 
             except Exception as e:
-                traceback.print_exc()
-                err = f"Error: {str(e)}"
-                return True, [err], _render_console_lines([err]), {}, {}, no_update
+                return SHOW_EMPTY, HIDE_CONSOLE, True, [str(e)], _render_console_lines([str(e)]), {}, {}, no_update
         
         raise PreventUpdate
 
@@ -365,27 +331,18 @@ def register_processing_callbacks(app):
         prevent_initial_call=False,
     )
     def update_progress(n):
-        # FIX: On initial load (n=0), force reset regardless of file state
-        if n == 0 or n is None:
-            return 0, "Ready to start..."
-
-        progress_data = read_progress() 
+        # ... (initial checks) ...
+        progress_data = read_progress()
         
-        # Default safety
-        if not progress_data:
-            return 0, "Ready to start..."
-
         pct = progress_data.get("percent", 0)
         msg = progress_data.get("message", "")
 
-        # Format text: Percentage based
+        # If it's 100%, show the message EXACTLY as the worker sent it
         if pct >= 100:
-            txt = "Processing Completed. 100%"
-        elif pct > 0:
-            txt = f"{msg} ({pct}% completed)"
-        else:
-            txt = msg 
-
+            return 100, msg 
+        
+        # Otherwise, show the percentage for active tasks
+        txt = f"{msg} ({pct}% completed)" if pct > 0 else msg
         return pct, txt
     
     # NEW: Clear old progress file on page refresh
@@ -405,19 +362,30 @@ def register_processing_callbacks(app):
             except:
                 pass
         return no_update
+    
 
     # Enable graphs tab only when predictions exist & interval disabled
     @app.callback(
+        Output("run-models-btn", "disabled"), # NEW: Disable toolbar button during run
         Output("tab-graphs", "disabled"),
-        Output("tab-artifacts", "disabled"),  
+        Output("tab-artifacts", "disabled"),
+        Output("kyd-tab", "disabled"),  
         Input("predictions-store", "data"),
-        Input("log-interval", "disabled"),
+        Input("log-interval", "disabled"), # interval_disabled=False means it IS running
         prevent_initial_call=False,
     )
-    def toggle_tabs(preds, interval_disabled):
+    def toggle_ui_states(preds, interval_disabled):
+        # Determine execution state
+        is_running = not interval_disabled #
         has_preds = bool(preds and isinstance(preds, dict) and len(preds) > 0)
-        should_enable = has_preds and interval_disabled
-        return not should_enable, not should_enable
+        
+        # 1. Disable 'Run Forecast' button if already running
+        run_btn_disabled = is_running
+        
+        # 2. Disable analysis tabs until finished
+        tabs_disabled = not (has_preds and interval_disabled)
+        
+        return run_btn_disabled, tabs_disabled, tabs_disabled, tabs_disabled
 
     # Download logs
     @app.callback(
@@ -522,7 +490,6 @@ def register_processing_callbacks(app):
     )
     def render_graph(preds):
         if not preds:
-            # Return empty for display and a message for graph
             return None, dmc.Text("No predictions available. Run the pipeline first.")
 
         try:
@@ -533,19 +500,29 @@ def register_processing_callbacks(app):
         except (StopIteration, KeyError, TypeError, AttributeError):
              return None, dmc.Text("Waiting for data...")
         
-        # ... [Keep your existing value retrieval logic] ...
         model_name = metric_obj.get("best_model") or metric_obj.get("model") or "Unknown"
         acc_val = metric_obj.get("accuracy", 0.0)
         mae_val = metric_obj.get("mae") or 0.0
 
-        # --- UI UPGRADE: Modernized Badges ---
+        # --- UPDATE: Calculate Bias and add Bias Badge ---
+        df = pd.DataFrame(metric_obj.get("records", []))
+        bias_val = 0.0
+        
+        # Defensive Check: Ensure columns exist before calculating bias
+        if "TestActual" in df.columns and "TestPrediction" in df.columns:
+            valid = df.dropna(subset=["TestActual", "TestPrediction"])
+            if not valid.empty:
+                sum_act = valid["TestActual"].sum()
+                sum_pred = valid["TestPrediction"].sum()
+                if sum_act != 0:
+                    bias_val = ((sum_act - sum_pred) / sum_act) * 100
+
         metrics_strip = [
             dmc.Badge(f"BEST MODEL: {model_name.upper()}", color="gray", variant="outline", size="lg", radius="xl"),                
             dmc.Badge(f"ACCURACY: {int(round(float(acc_val)))}%", color="blue", variant="light", size="lg", radius="xl"),
+            dmc.Badge(f"BIAS: {bias_val:+.1f}%", color="indigo", variant="light", size="lg", radius="xl"),
             dmc.Badge(f"AVG. ERROR: {int(round(float(mae_val)))}", color="blue", variant="light", size="lg", radius="xl"),
         ]
-        
-        df = pd.DataFrame(metric_obj.get("records", []))
         
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
@@ -574,16 +551,30 @@ def register_processing_callbacks(app):
         # Test predictions
         if "TestPrediction" in df.columns:
             fig.add_trace(go.Scatter(
-                x=df["Date"], y=df["TestPrediction"], mode="lines",
+                x=df["Date"], y=df["TestPrediction"], mode="lines+markers",
                 name="Test Prediction", line=dict(color="#d62728", dash="dot"), 
             ))
 
         # Future forecast
         if "Forecast" in df.columns:
             fig.add_trace(go.Scatter(
-                x=df["Date"], y=df["Forecast"], mode="lines",
+                x=df["Date"], y=df["Forecast"], mode="lines+markers",
                 name="Forecast", line=dict(color="#2ca02c"), 
             ))
+
+        # --- FIX: Defensive filtering to avoid KeyError: 'Forecast' ---
+        mask = pd.Series(False, index=df.index)
+        if "Forecast" in df.columns:
+            mask |= df["Forecast"].notna()
+        if "TestActual" in df.columns:
+            mask |= df["TestActual"].notna()
+            
+        df_valid = df[mask]
+        
+        if not df_valid.empty and "Date" in df.columns:
+            last_date = df_valid["Date"].max()
+            first_date = df["Date"].min()
+            fig.update_xaxes(range=[first_date, last_date])
 
         fig.update_layout(template="plotly_white", margin=dict(t=20, b=30, l=50, r=10))
 
@@ -625,97 +616,52 @@ def register_processing_callbacks(app):
             print(f"Export CSV Error: {str(e)}")
             raise PreventUpdate
 
-
-    # 2. Render Seasonal Decomposition (Using Service)
-    @app.callback(
-        Output("decomposition-graph", "figure"),
-        Input("predictions-store", "data"), # Changed to Input
-        prevent_initial_call=True,
-    )
-    def render_decomposition_artifact(preds):
-        if not preds: return go.Figure()
-        try:
-            sheet = next(iter(preds.keys()))
-            metric = next(iter(preds[sheet]["metrics"].keys()))
-            metric_data = preds[sheet]["metrics"][metric]
-            records = metric_data.get("records", [])
-
-            stats = {
-                "adi": metric_data.get("adi", 0),
-                "cv2": metric_data.get("cv2", 0),
-                "type": metric_data.get("demand_type", "Unknown")
-            }
-            return generate_seasonality_figure(records, metric, stats)
-        except: return go.Figure()
-
     # 3. Render Experiment Details (Using Service)
     @app.callback(
-        Output("experiment-graph", "figure"),
-        Input("predictions-store", "data"), # Trigger on data load
-        Input("experiment-perf-metric", "value"), # Trigger on metric change
+        [Output("experiment-graph", "figure"),
+         Output("experiment-split-info", "children")], # New Output for badges
+        [Input("predictions-store", "data"),
+         Input("experiment-perf-metric", "value")],
         prevent_initial_call=True,
     )
     def render_experiment_artifact(preds, perf_metric):
         if not preds or not perf_metric:
-            return go.Figure()
+            return go.Figure(), []
 
         try:
             sheet = next(iter(preds.keys()))
             metric = next(iter(preds[sheet]["metrics"].keys()))
-            return generate_experiment_figure(sheet, metric, perf_metric)
-        except: return go.Figure()
-
-    # 4. Render Distribution (Using Service)
-    @app.callback(
-        Output("distribution-graph", "figure"),
-        Input("predictions-store", "data"),
-        Input("artifact-y-plot-type", "value"), # <--- NEW INPUT
-        prevent_initial_call=True,
-    )
-    def render_distribution_artifact(preds, plot_type):
-        if not preds: return go.Figure()
-        
-        # Default to histogram if plot_type is None (on initial load)
-        current_plot_type = plot_type if plot_type else "histogram"
-
-        try:
-            sheet = next(iter(preds.keys()))
-            metric = next(iter(preds[sheet]["metrics"].keys()))
-            records = preds[sheet]["metrics"][metric].get("records", [])
+            metric_data = preds[sheet]["metrics"][metric]
             
-            # Pass the plot_type to the generator
-            return generate_distribution_figure(records, metric=metric, plot_type=current_plot_type)
-        except: return go.Figure()
+            # 1. Parse records to calculate split details
+            records = metric_data.get("records", [])
+            df = pd.DataFrame(records)
+            if "Date" in df.columns:
+                df["Date"] = pd.to_datetime(df["Date"])
+                
+                train_df = df[df["TrainActual"].notna()]
+                test_df = df[df["TestActual"].notna()]
+                
+                # 2. Create UI Badges
+                split_badges = [
+                    dmc.Badge(
+                        f"Train: {len(train_df)} Rows ({train_df['Date'].min().strftime('%Y-%m-%d')} to {train_df['Date'].max().strftime('%Y-%m-%d')})",
+                        color="blue", variant="light", radius="sm"
+                    ),
+                    dmc.Badge(
+                        f"Test: {len(test_df)} Rows ({test_df['Date'].min().strftime('%Y-%m-%d')} to {test_df['Date'].max().strftime('%Y-%m-%d')})",
+                        color="orange", variant="light", radius="sm"
+                    ),
+                ]
+            else:
+                split_badges = []
 
-    # 5. Render Stationarity
-    @app.callback(
-        Output("stationarity-graph", "figure"),
-        Input("predictions-store", "data"), # Changed to Input
-        prevent_initial_call=True,
-    )
-    def render_stationarity_artifact(preds):
-        if not preds: return go.Figure()
-        try:
-            sheet = next(iter(preds.keys()))
-            metric = next(iter(preds[sheet]["metrics"].keys()))
-            records = preds[sheet]["metrics"][metric].get("records", [])
-            return generate_stationarity_figure(records, metric)
-        except: return go.Figure()
-
-    # 6. Render ACF / PACF
-    @app.callback(
-        Output("acf-pacf-graph", "figure"),
-        Input("predictions-store", "data"), # Changed to Input
-        prevent_initial_call=True,
-    )
-    def render_acf_pacf_artifact(preds):
-        if not preds: return go.Figure()
-        try:
-            sheet = next(iter(preds.keys()))
-            metric = next(iter(preds[sheet]["metrics"].keys()))
-            records = preds[sheet]["metrics"][metric].get("records", [])
-            return generate_acf_pacf_figure(records, metric)
-        except: return go.Figure()
+            # 3. Generate Graph
+            fig = generate_experiment_figure(sheet, metric, perf_metric)
+            return fig, split_badges
+            
+        except Exception as e: 
+            return go.Figure(), [dmc.Text(f"Error loading split info: {str(e)}", size="xs", c="red")]
     
     # ------------------------------------------------------------------
     #  KNOW YOUR DATA (KYD) TAB CALLBACKS
@@ -763,164 +709,273 @@ def register_processing_callbacks(app):
             return [], []
 
     # ------------------------------------------------------------------
-    #  3. RUN HEALTH CHECK & GENERATE ALL KYD CHARTS (UPDATED)
+    #  3. RUN HEALTH CHECK & GENERATE ALL KYD CHARTS (MERGED STATIONARITY & DECOMPOSITION)
     # ------------------------------------------------------------------
     @app.callback(
-        # Visibility Outputs
         Output("kyd-empty-state", "style"),
         Output("kyd-main-content", "style"),
-
-        # X Outputs
-        Output("health-check-content", "children"),
-        Output("kyd-features-graph", "figure"),
-        Output("kyd-x-distribution-graph", "figure"),
+        Output("tab-x-health", "style"),      
+        Output("tab-x-collinear", "style"),   
+        Output("tab-x-dist", "style"),        
+        Output("health-check-content-raw", "children"),
+        Output("kyd-features-graph", "children"), 
+        Output("kyd-x-distribution-graph-raw", "children"), 
+        Output("kyd-stationarity-graph-raw", "figure"),
+        Output("kyd-stationarity-graph-processed", "figure"),
+        Output("kyd-decomposition-graph-raw", "figure"),
+        Output("kyd-decomposition-graph-processed", "figure"),
+        Output("kyd-acf-pacf-graph-raw", "figure"),
+        Output("kyd-acf-pacf-graph-processed", "figure"),
+        Output("kyd-y-distribution-graph-raw", "figure"),
+        Output("kyd-y-distribution-graph-processed", "figure"),
+        Output("kyd-collinear-type-label", "children"), 
+        Output("kyd-y-dist-results-raw", "children"),
+        Output("kyd-y-dist-results-processed", "children"),
         
-        # Y Outputs
-        Output("kyd-stationarity-graph", "figure"),
-        Output("kyd-decomposition-graph", "figure"),
-        Output("kyd-acf-pacf-graph", "figure"),
-        Output("kyd-y-distribution-graph", "figure"),
-        
-        Input("btn-check-health", "n_clicks"),
+        Input("store-target-dfs", "data"), 
+        Input("store-feature-dfs", "data"), 
+        Input("predictions-store", "data"), 
         Input("kyd-x-plot-type", "value"),
         Input("kyd-y-plot-type", "value"),
-        
-        # Data Sources
-        State("store-target-dfs", "data"),
-        State("select-sheet-target", "value"),
-        State("select-col-target", "value"),
-        State("store-feature-dfs", "data"),
-        
-        prevent_initial_call=True
+        Input("kyd-corr-method", "value"),
+        Input("select-sheet-target", "value"),
+        Input("select-col-target", "value"),
+        prevent_initial_call=False 
     )
-    def run_health_check(n_clicks, plot_type_x, plot_type_y, target_store, target_sheet, target_col, feature_store):
-        # 1. INITIAL VALIDATION
-        has_data = (target_store is not None and len(target_store) > 0) or \
-                   (feature_store is not None and len(feature_store) > 0)
+    def run_health_check(target_store, feature_store, preds, plot_type_x, plot_type_y, corr_method, target_sheet, target_col):
+        has_y = (target_store is not None and target_sheet in target_store)
+        has_x = (feature_store is not None and len(feature_store) > 0)
+        has_preds = (preds is not None and len(preds) > 0)
 
-        if n_clicks and n_clicks > 0 and has_data:
-            style_empty = {"display": "none"}
-            style_content = {"display": "block"}
-        else:
-            style_empty = {
-                "height": "60vh", 
-                "display": "flex", 
-                "flexDirection": "column", 
-                "alignItems": "center", 
-                "justifyContent": "center"
-            }
-            style_content = {"display": "none"}
+        if not (has_y or has_x):
+            return (no_update,) * 19
 
-        if not has_data:
-            return (style_empty, style_content, no_update, no_update, no_update, 
-                    no_update, no_update, no_update, no_update)
+        style_empty, style_content, style_always_visible = {"display": "none"}, {"display": "block"}, {"display": "block"}
+        from layout.main_layout import create_x_placeholder
+        x_placeholder = create_x_placeholder("Upload X feature file for analysis")
         
-        ctx = callback_context
-        trigger_id = ctx.triggered[0]["prop_id"].split(".")[0] if ctx.triggered else None
+        ret_health_raw = x_placeholder
+        ret_dist_x_raw = x_placeholder
+        ret_feat = x_placeholder
+        ret_dist_res_raw = dmc.Text("No data available", size="xs")
+        ret_dist_res_proc = dmc.Text("Waiting for engine...", size="xs")
         
-        # Flags
-        update_x = (trigger_id == "btn-check-health")
-        update_y = (trigger_id == "btn-check-health")
-        only_update_x_dist = (trigger_id == "kyd-x-plot-type")
-        only_update_y_dist = (trigger_id == "kyd-y-plot-type")
+        empty_fig = {"data": [], "layout": {"template": "plotly_white"}}
+        ret_stat_raw, ret_stat_proc = empty_fig, empty_fig
+        ret_decomp_raw, ret_decomp_proc = empty_fig, empty_fig
+        ret_acf_raw, ret_acf_proc = empty_fig, empty_fig
+        ret_dist_y_raw, ret_dist_y_proc = empty_fig, empty_fig
 
-        # Default Returns
-        ret_health = no_update
-        ret_feat = no_update
-        ret_dist_x = no_update
-        ret_stat = no_update
-        ret_decomp = no_update
-        ret_acf = no_update
-        ret_dist_y = no_update
+        collinear_label = "Linear Collinearity" if corr_method == "pearson" else "Non-Linear Collinearity"
 
-        # ---------------------------
-        # PROCESS X (FEATURES) + MERGE Y
-        # ---------------------------
-        if update_x or only_update_x_dist:
-            if not feature_store:
-                ret_health = dmc.Stack([dmc.Text("No Features (X) Data", size="lg", fw=500, c="gray")])
-            else:
-                try:
-                    # Load Features
-                    sheet_x = list(feature_store.keys())[0]
-                    df_x = pd.read_json(feature_store[sheet_x], orient='split')
-                    
-                    # --- CRITICAL FIX: MERGE TARGET FOR HEATMAP ---
-                    if target_store and target_sheet and target_col:
-                        df_y_tmp = pd.read_json(target_store[target_sheet], orient='split')
-                        
-                        # Find date columns for alignment
-                        date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
-                        date_col_y = next((c for c in df_y_tmp.columns if "date" in str(c).lower()), None)
-                        
-                        if date_col_x and date_col_y:
-                            df_x[date_col_x] = pd.to_datetime(df_x[date_col_x])
-                            df_y_tmp[date_col_y] = pd.to_datetime(df_y_tmp[date_col_y])
-                            
-                            # Merge Target variable into the Feature Dataframe
-                            df_merged_kyd = df_x.merge(
-                                df_y_tmp[[date_col_y, target_col]], 
-                                left_on=date_col_x, 
-                                right_on=date_col_y, 
-                                how="inner"
-                            )
-                            records_x = df_merged_kyd.to_dict(orient="records")
-                        else:
-                            records_x = df_x.to_dict(orient="records")
-                    else:
-                        records_x = df_x.to_dict(orient="records")
-
-                    # Identify feature columns for charts
-                    date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
-                    x_cols = [c for c in df_x.columns if pd.api.types.is_numeric_dtype(df_x[c]) and c != date_col_x]
-                    
-                    # Update Distribution
-                    ret_dist_x = generate_distribution_figure(records_x, x_cols=x_cols, plot_type=plot_type_x)
-                    
-                    # Generate Collinearity and Health Table on Button Click
-                    if update_x:
-                        fig_health = generate_health_summary_table(records_x, x_cols)
-                        ret_health = dcc.Graph(figure=fig_health, config={'displayModeBar': False})
-                        # records_x now contains target_col (Canceled)
-                        ret_feat = generate_feature_heatmap(records_x, target_col=target_col, x_cols=x_cols)
-
-                except Exception as e:
-                    if update_x: ret_health = dmc.Alert(f"Error: {str(e)}", color="red")
-
-        # ---------------------------
-        # PROCESS Y (TARGET)
-        # ---------------------------
-        if (update_y or only_update_y_dist) and target_store and target_sheet and target_col:
+        if has_x:
             try:
-                df_y = pd.read_json(target_store[target_sheet], orient='split')
-                date_col_y = next((c for c in df_y.columns if "date" in str(c).lower()), None)
+                sheet_x = list(feature_store.keys())[0]
+                df_x = pd.read_json(io.StringIO(feature_store[sheet_x]), orient='split')
+                x_cols = [c for c in df_x.columns if pd.api.types.is_numeric_dtype(df_x[c]) and "date" not in str(c).lower()]
                 
-                if date_col_y:
-                    df_y[date_col_y] = pd.to_datetime(df_y[date_col_y])
-                    df_y = df_y.sort_values(date_col_y)
-                    valid_y = df_y.dropna(subset=[target_col])
-                    
-                    records_y = []
-                    for _, r in valid_y.iterrows():
-                        records_y.append({"Date": r[date_col_y], "TrainActual": r[target_col]})
-                    
-                    if records_y:
-                        records_y_dist = valid_y.to_dict(orient="records")
-                        ret_dist_y = generate_distribution_figure(records_y_dist, metric=target_col, plot_type=plot_type_y)
+                recs_x_raw = df_x.to_dict(orient="records")
+                ret_health_raw = dcc.Graph(figure=generate_health_summary_table(recs_x_raw, x_cols), config={'displayModeBar': False})
+                ret_dist_x_raw = dcc.Graph(
+                    figure=generate_distribution_figure(recs_x_raw, x_cols=x_cols, plot_type=plot_type_x),
+                    responsive=True, style={"height": "100%", "width": "100%"}
+                )
+                
+                # --- DYNAMIC MERGE FOR COLLINEARITY (BUG FIXES) ---
+                recs_corr = recs_x_raw 
+                if has_preds:
+                    sheet_p = next(iter(preds.keys()))
+                    metric_p = next(iter(preds[sheet_p]["metrics"].keys()))
+                    recs_corr = preds[sheet_p]["metrics"][metric_p].get("records", [])
+                elif has_y and target_col:
+                    try:
+                        df_y_tmp = pd.read_json(io.StringIO(target_store[target_sheet]), orient='split')
                         
-                        if update_y:
-                            ret_stat = generate_stationarity_figure(records_y, target_col)
-                            series = pd.Series([r["TrainActual"] for r in records_y])
-                            adi = calculate_adi(series); cv2 = calculate_cv2(series)
-                            d_type = classify_demand(adi, cv2)
-                            ret_decomp = generate_seasonality_figure(records_y, target_col, {"adi": adi, "cv2": cv2, "type": d_type})
-                            ret_acf = generate_acf_pacf_figure(records_y, target_col)
-                        
-            except Exception as e:
-                 print(f"Error processing Target: {e}")
+                        # Robustly find date columns
+                        date_x = next((c for c in df_x.columns if "date" in str(c).lower().strip()), None)
+                        date_y = next((c for c in df_y_tmp.columns if "date" in str(c).lower().strip()), None)
 
-        return (style_empty, style_content, ret_health, ret_feat, ret_dist_x, ret_stat, ret_decomp, ret_acf, ret_dist_y)
+                        # Fallback: Specifically for Club_311 naming convention
+                        if not date_y and "DATE" in df_y_tmp.columns:
+                            date_y = "DATE"
+                        if not date_x and "DATE" in df_x.columns:
+                            date_x = "DATE"
+                        
+                        if date_x and date_y:
+                            df_x_dt = df_x.copy()
+                            df_y_dt = df_y_tmp[[date_y, target_col]].copy()
+                            
+                            # FIX: Force to datetime and NORMALIZE to remove hidden timestamps
+                            df_x_dt[date_x] = pd.to_datetime(df_x_dt[date_x], errors='coerce').dt.normalize()
+                            df_y_dt[date_y] = pd.to_datetime(df_y_dt[date_y], errors='coerce').dt.normalize()
+                            
+                            # Clean target column for correlation
+                            df_y_dt[target_col] = pd.to_numeric(df_y_dt[target_col], errors='coerce')
+                            
+                            # Merge with inner join
+                            merged_df = pd.merge(df_x_dt, df_y_dt, left_on=date_x, right_on=date_y, how='inner')
+                            
+                            if not merged_df.empty:
+                                # FIX: Use ffill() instead of deprecated method='ffill' to avoid crash
+                                recs_corr = merged_df.ffill().bfill().to_dict(orient="records")
+                            else:
+                                # Fallback to feature-only correlation if merge results in 0 rows
+                                recs_corr = recs_x_raw
+                    except Exception as merge_err: 
+                        print(f"Collinearity Merge Warning: {merge_err}")
+
+                ret_feat = dcc.Graph(
+                    figure=generate_feature_heatmap(recs_corr, target_col=target_col, x_cols=x_cols, method=corr_method),
+                    responsive=True, style={"height": "100%", "width": "100%"}
+                )
+            except Exception as e: print(f"X-Processing Error: {e}")
+
+        # --- Y-Analysis Processing (Logic Preserved) ---
+        if has_y and target_col:
+            try:
+                df_y = pd.read_json(io.StringIO(target_store[target_sheet]), orient='split')
+                date_col_y = next((c for c in df_y.columns if "date" in str(c).lower()), "Date")
+                df_y[date_col_y] = pd.to_datetime(df_y[date_col_y])
+                df_y = df_y.dropna(subset=[target_col]).sort_values(date_col_y)
+                recs_y_raw = [{"Date": r[date_col_y], "TrainActual": r[target_col]} for _, r in df_y.iterrows()]
+                series_raw = pd.Series([r["TrainActual"] for r in recs_y_raw]).dropna()
+                
+                ret_stat_raw = generate_stationarity_figure(recs_y_raw, target_col).to_dict()
+                stats_raw = {"adi": calculate_adi(series_raw), "cv2": calculate_cv2(series_raw), "type": classify_demand(calculate_adi(series_raw), calculate_cv2(series_raw))}
+                ret_decomp_raw = generate_seasonality_figure(recs_y_raw, target_col, stats_raw).to_dict()
+                ret_acf_raw = generate_acf_pacf_figure(recs_y_raw, target_col).to_dict()
+                ret_dist_y_raw = generate_distribution_figure(recs_y_raw, metric=target_col, plot_type=plot_type_y).to_dict()
+                
+                if plot_type_y == "histogram":
+                    ret_dist_res_raw = dmc.Alert(f"Mean: {series_raw.mean():.2f} | Med: {series_raw.median():.2f} | Skew: {series_raw.skew():.2f}", color="gray", variant="light", p="xs")
+                elif plot_type_y == "boxplot":
+                    q1, q3 = series_raw.quantile(0.25), series_raw.quantile(0.75)
+                    iqr = q3 - q1
+                    outlier_pct = (len(series_raw[(series_raw < (q1 - 1.5 * iqr)) | (series_raw > (q3 + 1.5 * iqr))]) / len(series_raw)) * 100
+                    ret_dist_res_raw = dmc.Alert(f"Q1: {q1:.2f} | Q3: {q3:.2f} | Outliers: {outlier_pct:.1f}%", color="gray", variant="light", p="xs")
+                else: ret_dist_res_raw = html.Div()
+
+                if has_preds:
+                    try:
+                        sheet_p = next(iter(preds.keys()))
+                        metric_p = next(iter(preds[sheet_p]["metrics"].keys()))
+                        recs_proc = preds[sheet_p]["metrics"][metric_p].get("records", [])
+                        series_proc = pd.Series([r.get("TrainActual") for r in recs_proc if r.get("TrainActual") is not None]).dropna()
+                        ret_stat_proc = generate_stationarity_figure(recs_proc, target_col).to_dict()
+                        stats_proc = {"adi": calculate_adi(series_proc), "cv2": calculate_cv2(series_proc), "type": classify_demand(calculate_adi(series_proc), calculate_cv2(series_proc))}
+                        ret_decomp_proc = generate_seasonality_figure(recs_proc, target_col, stats_proc).to_dict()
+                        ret_acf_proc = generate_acf_pacf_figure(recs_proc, target_col).to_dict()
+                        ret_dist_y_proc = generate_distribution_figure(recs_proc, metric=target_col, plot_type=plot_type_y).to_dict()
+                        
+                        if plot_type_y == "histogram":
+                            ret_dist_res_proc = dmc.Alert(f"Mean: {series_proc.mean():.2f} | Med: {series_proc.median():.2f} | Skew: {series_proc.skew():.2f}", color="blue", variant="light", p="xs")
+                        elif plot_type_y == "boxplot":
+                            pq1, pq3 = series_proc.quantile(0.25), series_proc.quantile(0.75)
+                            piqr = pq3 - pq1
+                            p_outlier_pct = (len(series_proc[(series_proc < (pq1 - 1.5 * piqr)) | (series_proc > (pq3 + 1.5 * piqr))]) / len(series_proc)) * 100
+                            ret_dist_res_proc = dmc.Alert(f"Q1: {pq1:.2f} | Q3: {pq3:.2f} | Outliers: {p_outlier_pct:.1f}%", color="blue", variant="light", p="xs")
+                        else: ret_dist_res_proc = html.Div()
+                    except: pass
+                else: ret_dist_y_proc = empty_fig
+            except Exception as e: print(f"Y-Processing Error: {e}")
+
+        return (
+            style_empty, style_content, 
+            style_always_visible, style_always_visible, style_always_visible, 
+            ret_health_raw, ret_feat, ret_dist_x_raw, 
+            ret_stat_raw, ret_stat_proc, 
+            ret_decomp_raw, ret_decomp_proc, 
+            ret_acf_raw, ret_acf_proc, 
+            ret_dist_y_raw, ret_dist_y_proc,
+            collinear_label, 
+            ret_dist_res_raw, ret_dist_res_proc
+        )
     
+    @app.callback(
+        Output("kyd-holiday-container", "children"),
+        Input("store-target-dfs", "data"),
+        Input("store-feature-dfs", "data"),
+        Input("select-col-target", "value"),
+        Input("region-select", "value"),
+        State("select-sheet-target", "value"),
+        prevent_initial_call=False
+    )
+    def render_holiday_analysis(target_store, feature_store, target_col, selected_regions, target_sheet):
+        # 1. Validation check
+        if not target_store or not target_sheet or not target_col:
+            return dmc.Text("Upload a Target (Y) file and select a column to begin analysis.", c="dimmed", ta="center", py="xl")
+
+        # 2. Region selection requirement
+        if not selected_regions or len(selected_regions) == 0:
+            return dmc.Alert(
+                "Please select a Region (e.g., India or United States) in the configuration toolbar to view holiday impact.",
+                title="Region Selection Required",
+                color="orange",
+                variant="light",
+                icon=DashIconify(icon="carbon:location-hazard")
+            )
+
+        try:
+            # 3. Parse Target Data with StringIO to avoid deprecation
+            df_y = pd.read_json(io.StringIO(target_store[target_sheet]), orient='split')
+            date_col_y = next((c for c in df_y.columns if "date" in str(c).lower()), None)
+            
+            if not date_col_y:
+                return dmc.Alert("Date column not found in Target file.", color="red")
+                
+            df_y[date_col_y] = pd.to_datetime(df_y[date_col_y])
+            df_y = df_y.set_index(date_col_y).sort_index()
+
+            # 4. Anchor on Y and join X
+            df_hol = df_y[[target_col]].reset_index()
+            if feature_store and len(feature_store) > 0:
+                try:
+                    sheet_x = list(feature_store.keys())[0]
+                    df_x = pd.read_json(io.StringIO(feature_store[sheet_x]), orient='split')
+                    date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
+                    if date_col_x:
+                        df_x[date_col_x] = pd.to_datetime(df_x[date_col_x])
+                        df_hol = df_y[[target_col]].join(df_x.set_index(date_col_x), how="left").reset_index()
+                except: pass
+
+            # 5. DYNAMIC HOLIDAY GENERATION
+            regions = selected_regions if selected_regions else []
+            
+            # This utility returns a DatetimeIndex
+            dynamic_holidays = get_region_holidays(df_hol[date_col_y], regions)
+
+            # FIX: Use 'isin' for boolean flag and apply conditional naming
+            df_hol["Is_Holiday"] = df_hol[date_col_y].isin(dynamic_holidays).astype(int)
+            
+            # Use lambda to check index presence since .get() is not available
+            df_hol["Holiday_Name"] = df_hol[date_col_y].apply(
+                lambda x: "Regional Holiday" if x in dynamic_holidays else None
+            )
+
+            # 6. Generate Figures via Artifact Service
+            records = df_hol.to_dict(orient="records")
+            table_fig = generate_holiday_table(records, target_col)
+            charts_fig = generate_holiday_charts(records, target_col)
+            window_fig = generate_holiday_windows(records, target_col)
+
+            return dmc.Stack(gap="lg", children=[
+                dmc.Stack(gap="xs", children=[
+                    dmc.Text("Holiday Inventory", fw=700, size="md", style={"color": "#1c1e21"}),
+                    elevated_card(children=dcc.Graph(figure=table_fig, config={'displayModeBar': False}), height="auto", overflow="visible"),
+                ]),
+                dmc.Stack(gap="xs", children=[
+                    dmc.Text("Holiday Impact Analysis", fw=700, size="md", style={"color": "#1c1e21"}),
+                    elevated_card(children=dcc.Graph(figure=charts_fig, config={'displayModeBar': True}), height="600px", overflow="auto"),
+                ]),
+                dmc.Stack(gap="xs", children=[
+                    dmc.Text("Holiday Temporal Impact", fw=700, size="md", style={"color": "#1c1e21"}),
+                    elevated_card(children=dcc.Graph(figure=window_fig), height="900px", overflow="auto"),
+                ])
+            ])
+
+        except Exception as e:
+            return dmc.Alert(f"Holiday Analysis Error: {str(e)}", color="red", variant="filled")
+        
     # 2.5 Render Data Treatment Analysis (Before/After & JSON)
     @app.callback(
         Output("treatment-graph", "figure"),
@@ -954,9 +1009,10 @@ def register_processing_callbacks(app):
     @app.callback(
         Output("features-graph", "figure"), # Artifacts ID
         Input("predictions-store", "data"),
+        Input("artifact-corr-method", "value"), # ADDED: New Input for correlation method
         prevent_initial_call=True,
     )
-    def render_features_analysis(preds):
+    def render_features_analysis(preds, corr_method): # ADDED: corr_method argument
         if not preds: 
             return go.Figure()
         
@@ -980,98 +1036,8 @@ def register_processing_callbacks(app):
             # Identify features (will include internal lags like lag_1, roll_mean_7)
             feature_cols = [c for c in df.columns if c not in non_feature_cols]
 
-            # ALWAYS call the multivariate analysis for Artifacts
-            # If feature_cols is empty, the function itself will handle the error message
-            return generate_multivariate_feature_analysis(records, metric, feature_cols)
+            return generate_multivariate_feature_analysis(records, metric, feature_cols, method=corr_method)
                 
         except Exception as e:
             print(f"Artifacts Feature Graph Error: {e}")
             return go.Figure().update_layout(title=f"Error: {str(e)}")
-    
-    # ------------------------------------------------------------------
-    #  4. RENDER HOLIDAY ANALYSIS (COMBINED DASHBOARD)
-    # ------------------------------------------------------------------
-    @app.callback(
-        Output("kyd-holiday-container", "children"),
-        Input("btn-check-health", "n_clicks"),
-        State("store-target-dfs", "data"),
-        State("select-sheet-target", "value"),
-        State("select-col-target", "value"),
-        State("store-feature-dfs", "data"),
-        State("select-region-config", "value"),
-        prevent_initial_call=True
-    )
-    def render_holiday_analysis(n_clicks, target_store, target_sheet, target_col, feature_store, selected_regions):
-        if not n_clicks or not target_store:
-            return no_update
-
-        try:
-            # 1. Load and Align Data (Y + X)
-            df_y = pd.read_json(target_store[target_sheet], orient='split')
-            date_col_y = next((c for c in df_y.columns if "date" in str(c).lower()), None)
-            df_y[date_col_y] = pd.to_datetime(df_y[date_col_y])
-            df_y = df_y.set_index(date_col_y).sort_index()
-
-            df_merged = None
-            if feature_store:
-                sheet_x = list(feature_store.keys())[0]
-                df_x = pd.read_json(feature_store[sheet_x], orient='split')
-                date_col_x = next((c for c in df_x.columns if "date" in str(c).lower()), None)
-                if date_col_x:
-                    df_x[date_col_x] = pd.to_datetime(df_x[date_col_x])
-                    df_x = df_x.set_index(date_col_x).sort_index()
-                    df_merged = df_y[[target_col]].join(df_x, how="inner").reset_index()
-            
-            if df_merged is None:
-                df_merged = df_y[[target_col]].reset_index()
-
-            # 2. Holiday Detection 
-            regions = selected_regions if selected_regions else ['US', 'IN']
-            dynamic_holidays = get_region_holidays(df_merged[date_col_y], selected_regions)
-
-            df_merged["Is_Holiday"] = df_merged[date_col_y].apply(lambda x: 1 if x in dynamic_holidays else 0)
-            df_merged["Holiday_Name"] = df_merged[date_col_y].apply(lambda x: dynamic_holidays.get(x))
-
-            # 3. Generate Visuals from Services
-            
-            records = df_merged.to_dict(orient="records")
-            
-            table_fig = generate_holiday_table(records, target_col)
-            charts_fig = generate_holiday_charts(records, target_col)
-            window_fig = generate_holiday_windows(records, target_col)
-
-            # 4. Return UI with Cards and Spacing
-            return dmc.Stack(gap="lg", children=[
-                # 1. Table Card
-                dmc.Stack(gap="xs", children=[
-                    dmc.Text("Holiday Inventory & Event Mapping", fw=700, size="md", style={"color": "#1c1e21"}),
-                    elevated_card(
-                        children=dcc.Graph(figure=table_fig, config={'displayModeBar': False}),
-                        height="auto",
-                        overflow="visible"
-                    ),
-                ]),
-                
-                # 2. Plots Card (Violin + Top 5 Bar)
-                dmc.Stack(gap="xs", children=[
-                    dmc.Text("Holiday Impact Analysis (Actuals vs Mean)", fw=700, size="md", style={"color": "#1c1e21"}),
-                    elevated_card(
-                        children=dcc.Graph(figure=charts_fig, config={'displayModeBar': True}),
-                        height="600px",
-                        overflow="auto"
-                    ),
-                ]),
-
-                # 3. Window Analysis Card (3x3 Grid)
-                dmc.Stack(gap="xs", children=[
-                    dmc.Text("Holiday Temporal Impact (Window View)", fw=700, size="md", style={"color": "#1c1e21"}),
-                    elevated_card(
-                        children=dcc.Graph(figure=window_fig),
-                        height="900px", # Tall enough for the 3x3 grid
-                        overflow="auto"
-                    ),
-                ])
-            ])
-
-        except Exception as e:
-            return dmc.Alert(f"Holiday Analysis Error: {str(e)}", color="red", variant="filled")
