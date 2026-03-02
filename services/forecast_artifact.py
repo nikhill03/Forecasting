@@ -1035,3 +1035,60 @@ def generate_holiday_windows(records: list, target_col: str) -> go.Figure:
     )
     
     return fig
+
+def generate_forecast_comparison_figure(records: list, adjusted_records: list = None, metric_name: str = "Forecast") -> go.Figure:
+    """
+    Renders a comparison between the baseline ML forecast and LLM-adjusted constraints.
+    Adheres to the Gallery UI palette: Subdued Gray vs. Primary Indigo.
+    """
+    df = pd.DataFrame(records)
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"])
+
+    fig = go.Figure()
+
+    # 1. Historical Actuals (Preserve standard styling)
+    if "TrainRaw" in df.columns:
+        fig.add_trace(go.Scatter(
+            x=df["Date"], y=df["TrainRaw"], mode="lines+markers",
+            name="History", line=dict(color="#1f77b4", width=1.5),
+            marker=dict(size=4, opacity=0.7)
+        ))
+
+    # 2. THE DUAL FORECAST LOGIC
+    if adjusted_records:
+        # "BEFORE" VIEW: Original Forecast (Subdued/Dashed)
+        fig.add_trace(go.Scatter(
+            x=df["Date"], y=df["Forecast"], mode="lines",
+            name="ML Baseline", 
+            line=dict(color="#dee2e6", width=2, dash="dot"), 
+            opacity=0.6
+        ))
+        
+        # "AFTER" VIEW: Adjusted Forecast (Primary Gallery Indigo)
+        df_adj = pd.DataFrame(adjusted_records)
+        df_adj["Date"] = pd.to_datetime(df_adj["Date"])
+        
+        fig.add_trace(go.Scatter(
+            x=df_adj["Date"], y=df_adj["Forecast"], mode="lines+markers",
+            name="AI Adjusted", 
+            line=dict(color="#6a11cb", width=3), # Matches --primary-indigo
+            marker=dict(size=6, symbol="diamond", line=dict(width=1, color="white"))
+        ))
+    else:
+        # Standard Single View (Green)
+        if "Forecast" in df.columns:
+            fig.add_trace(go.Scatter(
+                x=df["Date"], y=df["Forecast"], mode="lines+markers",
+                name="Forecast", line=dict(color="#2ca02c", width=2.5)
+            ))
+
+    fig.update_layout(
+        template="plotly_white",
+        hovermode="x unified",
+        margin=dict(t=20, b=30, l=50, r=10),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        font=dict(family="Inter, sans-serif")
+    )
+    
+    return fig
