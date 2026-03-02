@@ -2,12 +2,14 @@ import base64
 import html
 import io
 import json
+import logging
 import os
 import threading
 import traceback
 from datetime import datetime
 from dash_iconify import DashIconify
 from typing import Dict, Any, List, Optional
+from dash import ALL
 
 import dash_mantine_components as dmc
 import pandas as pd
@@ -21,6 +23,8 @@ from services.processing_engine import HISTORY_LOG, PROGRESS_JSON
 from utils.holiday_utils import get_region_holidays
 
 from services.data_handling import DataHandling 
+from services.llm_service import LLMService
+from services.constraint_executor import ConstraintExecutor
 from utils.holiday_utils import get_region_holidays
 
 from services.forecast_artifact import (
@@ -59,44 +63,46 @@ CURRENT_PROGRESS: Dict[str, int] = {"total": 0, "done": 0}
 WORKER_THREAD: Optional[threading.Thread] = None
 WORKER_THREAD_LOCK = threading.Lock()
 
+logger = logging.getLogger("dmc.processing")
+logger.setLevel(logging.INFO)
+
 
 def _now_ts():
-    return datetime.now().strftime("%H:%M:%S")
+    """Standardized timestamp matching the engine's format"""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def _append_log(msg: str):
-    line = f"[{_now_ts()}] {msg}"
-    IN_MEMORY_LOGS.append(line)
+def _write_debug(msg: str) -> None:
+    """Writes to the physical log file"""
     try:
-        with open(DEBUG_LOG, "a") as fh:
-            fh.write(line + "\n")
+        with open(DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{_now_ts()}] {msg}\n")
     except Exception:
         pass
+
+def _append_log(msg: str):
+    """Adds message to UI state and physical file simultaneously"""
+    line = f"[{_now_ts()}] {msg}"
+    if line not in IN_MEMORY_LOGS:
+        IN_MEMORY_LOGS.append(line)
+    _write_debug(msg)
 
 def _render_console_lines(lines):
     rendered = []
     for line in lines:
-        is_error = (
-            "error:" in line.lower()
-            or "exception" in line.lower()
-            or "failed" in line.lower()
-            or "critical" in line.lower()
-        )
-
+        # Determine Color based on content
+        is_error = any(kw in line.lower() for kw in ["error:", "exception", "failed", "critical"])
         is_success = "success:" in line.lower()
+        is_intervention = any(kw in line for kw in ["🛑", "🔄", "STOPPED", "RESTARTED"]) # NEW: Manual intervention
+
+        color = "#e6eef8" # Default
+        if is_error: color = "#ff4d4f"
+        elif is_success: color = "#2ecc71"
+        elif is_intervention: color = "#f39c12" # ORANGE for Stop/Restart
 
         rendered.append(
             dmc.Text(
-                line,
-                size="xs",
-                style={
-                    "color": (
-                        "#ff4d4f" if is_error
-                        else "#2ecc71" if is_success
-                        else "#e6eef8"
-                    ),
-                    "fontFamily": "monospace",
-                    "whiteSpace": "pre-wrap",
-                },
+                line, size="sm",
+                style={"color": color, "fontFamily": "monospace", "whiteSpace": "pre-wrap"}
             )
         )
     return rendered
@@ -192,28 +198,26 @@ def register_processing_callbacks(app):
     # 4. MAIN CONTROL RUN (MERGE & EXECUTE)
     # =================================================
     @app.callback(
-        Output("console-empty-state", "style"),
+        [Output("console-empty-state", "style"),
         Output("console-main-content", "style"),
         Output("log-interval", "disabled"),
         Output("log-store", "data"),
         Output("console-output", "children"),
         Output("predictions-store", "data"),
         Output("graph-store", "data"),
-        Output("content-tabs", "value"),
-        
-        Input("run-models-btn", "n_clicks"), 
+        Output("content-tabs", "value")],
+        [Input("run-models-btn", "n_clicks"), 
         Input("btn-stop", "n_clicks"),
         Input("btn-restart", "n_clicks"),
         Input("log-interval", "n_intervals"),
-        Input("clear-graph", "n_clicks"),
-        
-        State("store-target-dfs", "data"),
+        Input("clear-graph", "n_clicks")],
+        [State("store-target-dfs", "data"),
         State("select-sheet-target", "value"),
         State("select-col-target", "value"),
         State("store-feature-dfs", "data"),
         State("forecast-horizon-input", "value"),
         State("region-select", "value"),
-        State("test-window-select", "value"), 
+        State("test-window-select", "value")],
         prevent_initial_call=True
     )
     def control_run(n_click, stop_click, restart_click, n_int, clear_click,
@@ -224,9 +228,13 @@ def register_processing_callbacks(app):
         global IN_MEMORY_LOGS
 
         ctx = callback_context
+        if not ctx.triggered:
+            raise PreventUpdate
+            
         trigger = ctx.triggered[0]["prop_id"].split(".")[0]
         log_store = IN_MEMORY_LOGS
         
+        # --- UI DISPLAY STATES ---
         SHOW_EMPTY = {"height": "100%", "display": "flex", "borderRadius": "20px"}
         HIDE_EMPTY = {"display": "none"}
         SHOW_CONSOLE = {"display": "flex", "flexDirection": "column", "height": "100%"}
@@ -237,16 +245,25 @@ def register_processing_callbacks(app):
             clear_all_outputs()
             return SHOW_EMPTY, HIDE_CONSOLE, True, [], _render_console_lines([]), {}, {}, no_update
 
+        # 1. STOP LOGIC: Immediate append and file write
         if trigger == "btn-stop":
             try:
                 with open(STOP_FLAG, "w") as fh: fh.write("stop")
+                with open(PROGRESS_JSON, "w") as fh:
+                    json.dump({"percent": 0, "message": "🛑 Execution Stopped", "status": "stopped"}, fh)
             except: pass
+            
+            # Log to both memory and file immediately
             _append_log("🛑 Execution STOPPED by user request.") 
-            full_history = read_log_tail()
-            IN_MEMORY_LOGS = full_history[:]
-            return HIDE_EMPTY, SHOW_CONSOLE, True, full_history, _render_console_lines(full_history), no_update, no_update, no_update
-        
+            
+            return HIDE_EMPTY, SHOW_CONSOLE, False, IN_MEMORY_LOGS, _render_console_lines(IN_MEMORY_LOGS), no_update, no_update, no_update
+
+        # 2. INTERVAL POLLING LOGIC
         if trigger == "log-interval":
+            # If a stop was requested, disable the interval now
+            if os.path.exists(STOP_FLAG):
+                return no_update, no_update, True, no_update, no_update, no_update, no_update, no_update
+
             try:
                 preds, figs = read_predictions_and_figs()
                 tail = read_log_tail()
@@ -260,9 +277,20 @@ def register_processing_callbacks(app):
             except: pass
             return no_update
 
+        # 3. RUN / RESTART LOGIC
         if trigger in ["run-models-btn", "btn-restart"]:
+            if trigger == "btn-restart":
+                try:
+                    with open(STOP_FLAG, "w") as fh: fh.write("stop")
+                    # Clear progress file for fresh start
+                    if os.path.exists(PROGRESS_JSON): os.remove(PROGRESS_JSON)
+                except: pass
+                
+                IN_MEMORY_LOGS.clear()
+                restart_msg = f"[{_now_ts()}] 🔄 Execution RESTARTED by user request."
+                IN_MEMORY_LOGS.append(restart_msg)
             
-            # 1. VALIDATION CHECK
+            # 1. VALIDATION CHECK (Logic Preserved)
             missing = []
             if not target_store or not target_sheet or not target_col: missing.append("Target Data")
             if not horizon: missing.append("Forecast Horizon")
@@ -274,9 +302,8 @@ def register_processing_callbacks(app):
                 return SHOW_EMPTY, HIDE_CONSOLE, True, log_store + [err], _render_console_lines(log_store + [err]), {}, {}, no_update
 
             try:
-                # Get dynamic window size (Default to 30)
+                # 2. DATA PREPARATION (Logic Preserved)
                 test_size = int(test_window) if test_window else 30
-
                 df_y = pd.read_json(target_store[target_sheet], orient='split')
                 date_col_y = next((c for c in df_y.columns if "date" in str(c).lower()), None)
                 df_y[date_col_y] = pd.to_datetime(df_y[date_col_y])
@@ -299,15 +326,18 @@ def register_processing_callbacks(app):
                 df_merged.reset_index().to_csv(csv_buffer, index=False)
                 b64_merged = base64.b64encode(csv_buffer.getvalue().encode('utf-8')).decode('utf-8')
                 
+                # 3. WORKER INITIATION (Logic Preserved)
                 clear_all_outputs()
-                IN_MEMORY_LOGS.clear() 
+                # Clear memory for fresh run if not already cleared by restart logic
+                if trigger == "run-models-btn":
+                    IN_MEMORY_LOGS.clear() 
                 
                 def _thread_target():
                     try:
                         processing_worker(
                             b64_merged, ["Sheet1"], [target_col],
                             selected_x_cols=x_cols_list, forecast_horizon=int(horizon),
-                            test_window=test_size, # PASSED: New dynamic argument
+                            test_window=test_size,
                             selected_regions=selected_regions
                         )
                     except Exception as e: _append_log(f"Worker Error: {str(e)}")
@@ -316,8 +346,7 @@ def register_processing_callbacks(app):
                     WORKER_THREAD = threading.Thread(target=_thread_target, daemon=True)
                     WORKER_THREAD.start()
 
-                return HIDE_EMPTY, SHOW_CONSOLE, False, [], _render_console_lines([]), {}, {}, "console"
-
+                return HIDE_EMPTY, SHOW_CONSOLE, False, IN_MEMORY_LOGS, _render_console_lines(IN_MEMORY_LOGS), {}, {}, "console"
             except Exception as e:
                 return SHOW_EMPTY, HIDE_CONSOLE, True, [str(e)], _render_console_lines([str(e)]), {}, {}, no_update
         
@@ -485,30 +514,30 @@ def register_processing_callbacks(app):
     @app.callback(
         [Output("best-model-display", "children"),
         Output("graph-container", "children")],
-        Input("predictions-store", "data"),
+        [Input("predictions-store", "data"),
+        Input("adjusted-forecast-store", "data")], 
         prevent_initial_call=False,
     )
-    def render_graph(preds):
+    def render_graph(preds, adjusted_data):
         if not preds:
             return None, dmc.Text("No predictions available. Run the pipeline first.")
 
         try:
+            # Standard extraction of the active metric sheet
             sheet = next(iter(preds.keys()))
             sheet_obj = preds[sheet]
             metric = next(iter(sheet_obj["metrics"].keys()))
             metric_obj = sheet_obj["metrics"][metric]
         except (StopIteration, KeyError, TypeError, AttributeError):
-             return None, dmc.Text("Waiting for data...")
+            return None, dmc.Text("Waiting for data...")
         
         model_name = metric_obj.get("best_model") or metric_obj.get("model") or "Unknown"
         acc_val = metric_obj.get("accuracy", 0.0)
         mae_val = metric_obj.get("mae") or 0.0
 
-        # --- UPDATE: Calculate Bias and add Bias Badge ---
+        # 1. BIAS CALCULATION LOGIC
         df = pd.DataFrame(metric_obj.get("records", []))
         bias_val = 0.0
-        
-        # Defensive Check: Ensure columns exist before calculating bias
         if "TestActual" in df.columns and "TestPrediction" in df.columns:
             valid = df.dropna(subset=["TestActual", "TestPrediction"])
             if not valid.empty:
@@ -517,19 +546,25 @@ def register_processing_callbacks(app):
                 if sum_act != 0:
                     bias_val = ((sum_act - sum_pred) / sum_act) * 100
 
-        metrics_strip = [
-            dmc.Badge(f"BEST MODEL: {model_name.upper()}", color="gray", variant="outline", size="lg", radius="xl"),                
-            dmc.Badge(f"ACCURACY: {int(round(float(acc_val)))}%", color="blue", variant="light", size="lg", radius="xl"),
-            dmc.Badge(f"BIAS: {bias_val:+.1f}%", color="indigo", variant="light", size="lg", radius="xl"),
-            dmc.Badge(f"AVG. ERROR: {int(round(float(mae_val)))}", color="blue", variant="light", size="lg", radius="xl"),
-        ]
-        
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
+        # 2. Logic for "Adjustment" Badge
+        # adjustment_badge = []
+        # if adjusted_data:
+        #     adjustment_badge = [dmc.Badge("ADJUSTED BY AI", color="indigo", variant="filled", size="lg", radius="xl")]
+
+        # 3. METRICS STRIP WITH BIAS ADDED
+        metrics_strip = [
+            dmc.Badge(f"BEST MODEL: {model_name.upper()}", color="gray", variant="outline", size="lg", radius="xl"),                
+            dmc.Badge(f"ACCURACY: {int(round(float(acc_val)))}%", color="blue", variant="light", size="lg", radius="xl"),
+            dmc.Badge(f"BIAS: {bias_val:+.1f}%", color="indigo", variant="light", size="lg", radius="xl"), # RESTORED BIAS
+            dmc.Badge(f"AVG. ERROR: {int(round(float(mae_val)))}", color="blue", variant="light", size="lg", radius="xl"),
+        ] # + adjustment_badge
+        
         fig = go.Figure()
 
-        # Train actuals
+        # Trace 1: Historical Actuals (Standard Blue)
         if "TrainRaw" in df.columns:
             fig.add_trace(go.Scatter(
                 x=df["Date"], y=df["TrainRaw"], mode="lines+markers",
@@ -541,42 +576,47 @@ def register_processing_callbacks(app):
                 name="Train Actual (Cleaned)", line=dict(color="#1f77b4"), 
             ))
 
-        # Test actuals
+        # Trace 2: Test Set Actuals & Predictions
         if "TestActual" in df.columns:
             fig.add_trace(go.Scatter(
                 x=df["Date"], y=df["TestActual"], mode="lines+markers",
                 name="Test Actual", line=dict(color="#ff7f0e"), connectgaps=False
             ))
-
-        # Test predictions
         if "TestPrediction" in df.columns:
             fig.add_trace(go.Scatter(
                 x=df["Date"], y=df["TestPrediction"], mode="lines+markers",
                 name="Test Prediction", line=dict(color="#d62728", dash="dot"), 
             ))
 
-        # Future forecast
+        # Trace 3: FORECAST COMPARISON LOGIC (Baseline Green vs. Adjusted Indigo)
         if "Forecast" in df.columns:
+            # ORIGINAL BASELINE: Always Green
             fig.add_trace(go.Scatter(
                 x=df["Date"], y=df["Forecast"], mode="lines+markers",
-                name="Forecast", line=dict(color="#2ca02c"), 
+                name="Forecast", 
+                line=dict(color="#2ca02c", width=2), 
+                opacity=0.4 if adjusted_data else 1.0 
             ))
-
-        # --- FIX: Defensive filtering to avoid KeyError: 'Forecast' ---
-        mask = pd.Series(False, index=df.index)
-        if "Forecast" in df.columns:
-            mask |= df["Forecast"].notna()
-        if "TestActual" in df.columns:
-            mask |= df["TestActual"].notna()
             
-        df_valid = df[mask]
-        
-        if not df_valid.empty and "Date" in df.columns:
-            last_date = df_valid["Date"].max()
-            first_date = df["Date"].min()
-            fig.update_xaxes(range=[first_date, last_date])
+            if adjusted_data:
+                # ADJUSTED FORECAST: Highlighted Indigo
+                df_adj = pd.DataFrame(adjusted_data)
+                df_adj["Date"] = pd.to_datetime(df_adj["Date"])
+                
+                df_adj_forecast = df_adj[df_adj["Forecast"].notna()]
+                
+                fig.add_trace(go.Scatter(
+                    x=df_adj_forecast["Date"], y=df_adj_forecast["Forecast"], mode="lines+markers",
+                    name="Adjusted Forecast", 
+                    line=dict(color="#6a11cb", width=3), 
+                    marker=dict(size=8, symbol="diamond")
+                ))
 
-        fig.update_layout(template="plotly_white", margin=dict(t=20, b=30, l=50, r=10))
+        fig.update_layout(
+            template="plotly_white", 
+            margin=dict(t=20, b=30, l=50, r=10),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
 
         return metrics_strip, dcc.Graph(figure=fig, style={"height": "70vh"})
     
@@ -1041,3 +1081,141 @@ def register_processing_callbacks(app):
         except Exception as e:
             print(f"Artifacts Feature Graph Error: {e}")
             return go.Figure().update_layout(title=f"Error: {str(e)}")
+        
+    # --- New LLM Callback in register_processing_callbacks() ---
+    @app.callback(
+        [Output("adjusted-forecast-store", "data"),
+        Output("chat-history", "children"),
+        Output("llm-constraint-input", "value")],
+        [Input("apply-llm-btn", "n_clicks"),
+        Input("reset-llm-btn", "n_clicks")],
+        [State("llm-constraint-input", "value"),
+        State("predictions-store", "data"),
+        State("adjusted-forecast-store", "data"), # NEW: Read current state to stack changes
+        State("chat-history", "children")],
+        prevent_initial_call=True
+    )
+    def handle_llm_adjustment(apply_n, reset_n, prompt, preds, adjusted_data, history):
+        ctx = callback_context
+        if not ctx.triggered:
+            raise PreventUpdate
+        
+        trigger = ctx.triggered[0]["prop_id"].split(".")[0]
+
+        # 1. Reset Logic: Returns to original baseline
+        if trigger == "reset-llm-btn":
+            reset_alert = dmc.Alert(
+                "Forecast reset to original ML baseline.", 
+                color="gray", variant="light", radius="md", mb="sm"
+            )
+            return None, [reset_alert], ""
+
+        # 2. Guard Rails
+        if not prompt or not preds:
+            error_box = dmc.Alert(
+                "No prompt or active forecast found.", 
+                title="Input Error", color="red", variant="filled", radius="md", mb="sm"
+            )
+            return no_update, history, no_update
+
+        try:
+            # 3. Base Data Selection: Stack on existing adjustment or start from baseline
+            if adjusted_data:
+                df = pd.DataFrame(adjusted_data)
+            else:
+                sheet = next(iter(preds.keys()))
+                metric = next(iter(preds[sheet]["metrics"].keys()))
+                records = preds[sheet]["metrics"][metric].get("records", [])
+                df = pd.DataFrame(records)
+                
+            df["Date"] = pd.to_datetime(df["Date"])
+            
+            # 4. LLM Code Generation
+            metadata = {col: str(dtype) for col, dtype in df.dtypes.items()}
+            generated_code = LLMService.generate_adjustment_code(prompt, metadata)
+            
+            if not generated_code:
+                error_box = dmc.Alert(
+                    "LLM failed to generate executable code.", 
+                    title="Generation Error", color="red", variant="light", radius="md", mb="sm"
+                )
+                return no_update, history + [error_box], ""
+
+            # 5. Execute code safely
+            df_adjusted = ConstraintExecutor.execute_safely(df, generated_code)
+            df_adjusted["Date"] = df_adjusted["Date"].dt.strftime('%Y-%m-%dT%H:%M:%S')
+            
+            # 6. Create Chat Bubble with Undo Action
+            user_msg = dmc.Paper(
+                p="sm", radius="md", mb="sm", withBorder=True,
+                style={"backgroundColor": "#f8f9fa"},
+                children=[
+                    dmc.Group(justify="space-between", children=[
+                        dmc.Text(f"Adjustment {len(history)}", fw=700, size="xs", c="indigo"),
+                        # Pattern-matching ID for the Undo button
+                        dmc.ActionIcon(
+                            DashIconify(icon="carbon:undo", width=14),
+                            id={"type": "undo-btn", "index": len(history)},
+                            variant="subtle", color="gray", size="sm"
+                        )
+                    ]),
+                    dmc.Text(prompt, size="sm", mt=4),
+                    dmc.Code(generated_code, block=True, mt="xs", color="gray") 
+                ]
+            )
+            history.append(user_msg)
+            
+            return df_adjusted.to_dict(orient="records"), history, ""
+
+        except Exception as e:
+            error_box = dmc.Alert(
+                f"Logic Error: {str(e)}", title="Execution Failed",
+                color="red", variant="light", radius="md", mb="sm",
+                icon=DashIconify(icon="carbon:warning-alt-filled")
+            )
+            return no_update, history + [error_box], no_update
+        
+
+    @app.callback(
+        [Output("adjusted-forecast-store", "data", allow_duplicate=True),
+        Output("chat-history", "children", allow_duplicate=True)],
+        Input({"type": "undo-btn", "index": ALL}, "n_clicks"),
+        [State("predictions-store", "data"),
+        State("chat-history", "children")],
+        prevent_initial_call=True
+    )
+    def undo_last_adjustment(n_clicks, preds, history):
+        # Check if any undo button was actually clicked
+        if not any(n_clicks) or not history:
+            raise PreventUpdate
+
+        # Remove the most recent adjustment bubble
+        history.pop()
+
+        # Case: If history is now empty (or only contains the initial alert)
+        if not history or (len(history) == 1 and "Ready to Assist" in str(history[0])):
+            return None, history
+
+        try:
+            # Re-initialize the base DataFrame from original ML results
+            sheet = next(iter(preds.keys()))
+            metric = next(iter(preds[sheet]["metrics"].keys()))
+            df = pd.DataFrame(preds[sheet]["metrics"][metric].get("records", []))
+            df["Date"] = pd.to_datetime(df["Date"])
+
+            # Re-apply every remaining code block in the history to rebuild the state
+            for bubble in history:
+                try:
+                    # Dig into the dmc.Paper structure to find the dmc.Code content
+                    # Structure: Paper -> [Group, Text, Code]
+                    code_to_reapply = bubble['props']['children'][2]['props']['children']
+                    df = ConstraintExecutor.execute_safely(df, code_to_reapply)
+                except (KeyError, IndexError, TypeError):
+                    continue # Skip alerts or bubbles without code
+            
+            df["Date"] = df["Date"].dt.strftime('%Y-%m-%dT%H:%M:%S')
+            return df.to_dict(orient="records"), history
+            
+        except Exception as e:
+            print(f"Undo Reconstruction Failed: {e}")
+            return None, history
