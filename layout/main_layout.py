@@ -58,6 +58,7 @@ def create_layout():
             dcc.Store(id="uploaded-raw", data=None), 
             dcc.Store(id="uploaded-dfs", data={}),   
             dcc.Store(id="uploaded-filename-store", data=None),
+            dcc.Store(id="adjusted-forecast-store", data=None),
             dcc.Interval(id="log-interval", interval=1000, n_intervals=0, disabled=True),
             dcc.Download(id="download-logs"),
             dcc.Download(id="download-pred"),
@@ -261,86 +262,59 @@ def create_layout():
                                         value="console",
                                         children=[
                                             dmc.Stack(
-                                                p="xl", style={"height": "80vh"},
+                                                p="xl", 
+                                                style={"height": "auto", "width": "100%"}, # Ensure stack fills width
                                                 children=[
+                                                    # Empty State Placeholder (Logic Preserved)
                                                     dmc.Stack(
                                                         id="console-empty-state",
                                                         align="center",
                                                         justify="center",
-                                                        style={"height": "100%", "display": "flex", "borderRadius": "20px"},
+                                                        style={"height": "55vh", "display": "flex", "borderRadius": "20px"},
                                                         gap="xl",
                                                         children=[
                                                             html.Div(
                                                                 style={
                                                                     "background": "var(--primary-gradient)",
-                                                                    "padding": "25px",         # Slightly increased to balance the larger icon
+                                                                    "padding": "25px",
                                                                     "borderRadius": "50%",
                                                                     "display": "flex",
                                                                     "alignItems": "center",
                                                                     "justifyContent": "center",
-                                                                    "boxShadow": "0 10px 30px -10px rgba(0,0,0,0.2)" # Added for visual depth
+                                                                    "boxShadow": "0 10px 30px -10px rgba(0,0,0,0.2)"
                                                                 },
-                                                                children=DashIconify(
-                                                                    icon="carbon:terminal", 
-                                                                    width=65,                  # Increased to 65px to match 28px bold text weight
-                                                                    color="white"
-                                                                )
+                                                                children=DashIconify(icon="carbon:terminal", width=65, color="white")
                                                             ),
-                                                            dmc.Stack(
-                                                                gap=5, 
-                                                                align="center", 
-                                                                children=[
-                                                                    dmc.Text(
-                                                                        "Upload data to Generate Forecast", 
-                                                                        fz="28px", 
-                                                                        fw=800, 
-                                                                        className="gradient-text",
-                                                                        style={"textAlign": "center"} # Ensures text centers if it wraps
-                                                                    ),
-                                                                ]
-                                                            ),
+                                                            dmc.Text("Upload data to Generate Forecast", fz="28px", fw=800, className="gradient-text", style={"textAlign": "center"}),
                                                         ]
                                                     ),
 
+                                                    # Main Console Grid - Added grow=True for full-width filling
                                                     dmc.Grid(
                                                         id="console-main-content",
                                                         gutter="xl",
-                                                        style={"display": "none", "height": "100%"},
+                                                        grow=True, # Forces columns to expand to fill empty space
+                                                        style={"display": "none", "width": "100%"},
                                                         children=[
                                                             dmc.GridCol(span=8, children=[
-                                                                dmc.Stack(gap="sm", style={"height": "100%"}, children=[
+                                                                dmc.Stack(gap="sm", style={"width": "100%"}, children=[
+                                                                    
+                                                                    # LINE 1: Status Title, Progress Bar, and Action Buttons
                                                                     dmc.Group(
                                                                         justify="space-between", align="center",
                                                                         children=[
                                                                             dmc.Group(
-                                                                                align="center", gap="md",
+                                                                                align="center", gap="xl",
                                                                                 children=[
-                                                                                    dmc.Text("Execution Status", fw=700, fz="md", style={"color": "#1c1e21"}),
-                                                                                    dmc.Group(
-                                                                                        gap="lg", # Increased gap for better breathing room
-                                                                                        align="center",
-                                                                                        children=[
-                                                                                            dmc.Progress(
-                                                                                                id="processing-progress", 
-                                                                                                value=0, 
-                                                                                                size="sm", 
-                                                                                                color="indigo", 
-                                                                                                style={"width": 200, "transition": "width 0.5s ease"}
-                                                                                            ),
-                                                                                            # ENHANCED TEXT: Matches the 'Execution Status' font weight
-                                                                                            dmc.Text(
-                                                                                                id="progress-text", 
-                                                                                                fz="sm",      # Slightly larger than 'xs' to match readability
-                                                                                                fw=700,      # Bolded to match the 'Execution Status' weight
-                                                                                                className="gradient-text", # Applies the indigo/blue gradient when active
-                                                                                                style={
-                                                                                                    "letterSpacing": "0.3px",
-                                                                                                    "minWidth": "250px" # Prevents layout shifting when text changes
-                                                                                                }
-                                                                                            ),
-                                                                                        ]
+                                                                                    dmc.Text("Execution Status", fw=700, fz="md", style={"color": "#1c1e21", "fontSize": "16px"}),
+                                                                                    dmc.Progress(
+                                                                                        id="processing-progress", 
+                                                                                        value=0, 
+                                                                                        size="sm", 
+                                                                                        color="indigo", 
+                                                                                        style={"width": 250, "transition": "width 0.5s ease"}
                                                                                     ),
-                                                                                ],
+                                                                                ]
                                                                             ),
                                                                             dmc.Group(
                                                                                 gap="xs",
@@ -352,13 +326,28 @@ def create_layout():
                                                                             ),
                                                                         ],
                                                                     ),
+                                                                    
+                                                                    # LINE 2: Dedicated row for Progress Message (_emit_status)
+                                                                    dmc.Box(
+                                                                        pl=3, 
+                                                                        children=dmc.Text(
+                                                                            id="progress-text", 
+                                                                            fz="sm",      
+                                                                            fw=600,      
+                                                                            className="gradient-text", 
+                                                                            style={"letterSpacing": "0.3px", "fontSize": "14px"}
+                                                                        )
+                                                                    ),
+
+                                                                    # Output Window - Explicitly set to 100% width
                                                                     dmc.Paper(
                                                                         id="console-output", 
                                                                         radius="md", p="sm", withBorder=True,
                                                                         style={
                                                                             "height": "calc(80vh - 80px)", 
+                                                                            "width": "100%",
                                                                             "backgroundColor": "#111214", "color": "#e6eef8", 
-                                                                            "fontFamily": "monospace", "fontSize": "12px", 
+                                                                            "fontFamily": "monospace", "fontSize": "14px", 
                                                                             "overflowY": "auto", "whiteSpace": "pre-wrap",
                                                                             "border": "1px solid #2d2e32"
                                                                         },
@@ -366,53 +355,47 @@ def create_layout():
                                                                 ])
                                                             ]),
 
+                                                            # Configuration Side-Card - Explicitly set to 100% width
                                                             dmc.GridCol(span=4, children=[
-                                                            dmc.Paper(
-                                                                withBorder=True, 
-                                                                radius="md", 
-                                                                p="xl",
-                                                                style={
-                                                                    "height": "100%", 
-                                                                    "backgroundColor": "white", # Or "var(--surface-bg)" for subtle contrast
-                                                                    "boxShadow": "var(--card-shadow)",
-                                                                    "border": "1px solid #dee2e6"
-                                                                },
-                                                                children=[
-                                                                    dmc.Stack(gap="lg", children=[
-                                                                        dmc.Group(gap="sm", children=[
-                                                                            # Use primary-blue variable for icon consistency
-                                                                            DashIconify(icon="carbon:settings-adjust", width=24, color="var(--primary-blue)"),
-                                                                            dmc.Text("Configuration", fw=700, fz="lg", className="gradient-text"),
-                                                                        ]),
-                                                                        dmc.Divider(variant="solid", color="#f1f3f5"),
-                                                                        
-                                                                        dmc.Select(
-                                                                            id="test-window-select",
-                                                                            label="Test Window Size (Days)",
-                                                                            data=[
-                                                                                {"label": "30 Days", "value": "30"}, 
-                                                                                {"label": "60 Days", "value": "60"}, 
-                                                                                {"label": "90 Days", "value": "90"}, 
-                                                                                {"label": "120 Days", "value": "120"}
-                                                                            ],
-                                                                            value="30",
-                                                                            radius="md",
-                                                                            # UI UPGRADE: Apply 'filled' variant and leftSection color
-                                                                            variant="filled",
-                                                                            leftSection=DashIconify(icon="carbon:time", color="var(--primary-blue)"),
-                                                                            style={"width": "100%"},
-                                                                            # Match MultiSelect logic to keep text clean
-                                                                            styles={
-                                                                                "input": {
-                                                                                    "backgroundColor": "#f1f3f5",
-                                                                                    "border": "none"
-                                                                                }
-                                                                            }
-                                                                        ),
-                                                                    ])
-                                                                ]
-                                                            )
-                                                        ])
+                                                                dmc.Paper(
+                                                                    withBorder=True, 
+                                                                    radius="md", 
+                                                                    p="xl",
+                                                                    style={
+                                                                        "height": "100%", 
+                                                                        "width": "100%",
+                                                                        "backgroundColor": "white",
+                                                                        "boxShadow": "var(--card-shadow)",
+                                                                        "border": "1px solid #dee2e6"
+                                                                    },
+                                                                    children=[
+                                                                        dmc.Stack(gap="lg", children=[
+                                                                            dmc.Group(gap="sm", children=[
+                                                                                DashIconify(icon="carbon:settings-adjust", width=24, color="var(--primary-blue)"),
+                                                                                dmc.Text("Configuration", fw=700, fz="lg", className="gradient-text"),
+                                                                            ]),
+                                                                            dmc.Divider(variant="solid", color="#f1f3f5"),
+                                                                            
+                                                                            dmc.Select(
+                                                                                id="test-window-select",
+                                                                                label="Test Window Size (Days)",
+                                                                                data=[
+                                                                                    {"label": "30 Days", "value": "30"}, 
+                                                                                    {"label": "60 Days", "value": "60"}, 
+                                                                                    {"label": "90 Days", "value": "90"}, 
+                                                                                    {"label": "120 Days", "value": "120"}
+                                                                                ],
+                                                                                value="30",
+                                                                                radius="md",
+                                                                                variant="filled",
+                                                                                leftSection=DashIconify(icon="carbon:time", color="var(--primary-blue)"),
+                                                                                style={"width": "100%"},
+                                                                                styles={"input": {"backgroundColor": "#f1f3f5", "border": "none"}}
+                                                                            ),
+                                                                        ])
+                                                                    ]
+                                                                )
+                                                            ])
                                                         ]
                                                     )
                                                 ]
@@ -424,42 +407,92 @@ def create_layout():
                                     dmc.TabsPanel(
                                         value="graphs",
                                         children=[
-                                            dmc.Stack(
-                                                p="xl", 
-                                                style={"height": "105vh"}, 
+                                            dmc.Grid(
+                                                p="xl", gutter="xl",
                                                 children=[
-                                                    elevated_card(
-                                                        height="100%",
+                                                    # Main Graph Area
+                                                    dmc.GridCol(
+                                                        span=8,
                                                         children=[
-                                                            dmc.Stack(
-                                                                style={"height": "100%", "display": "flex", "flexDirection": "column"}, 
-                                                                gap="md",
+                                                            elevated_card(
+                                                                height="100%",
                                                                 children=[
-                                                                    dmc.Group(
-                                                                        justify="space-between", 
-                                                                        align="center",
-                                                                        p="sm",
+                                                                    dmc.Stack(
+                                                                        style={"height": "100%", "display": "flex", "flexDirection": "column"}, 
+                                                                        gap="md",
                                                                         children=[
-                                                                            html.Div(id="best-model-display", style={"display": "flex", "alignItems": "center", "gap": "10px"}),
                                                                             dmc.Group(
-                                                                                gap="sm",
+                                                                                justify="space-between", align="center", p="sm",
                                                                                 children=[
-                                                                                    dmc.Button("Export CSV", id="export-csv", variant="light", color="indigo", fz="sm", radius="md", leftSection=DashIconify(icon="carbon:download", width=16)),
-                                                                                    dmc.Button("Clear", id="clear-graph", variant="outline", color="gray", fz="sm", radius="md", leftSection=DashIconify(icon="carbon:eraser", width=16)),
+                                                                                    html.Div(id="best-model-display", style={"display": "flex", "alignItems": "center", "gap": "10px"}),
+                                                                                    dmc.Group(
+                                                                                        gap="sm",
+                                                                                        children=[
+                                                                                            dmc.Button("Export CSV", id="export-csv", variant="light", color="indigo", fz="sm", radius="md", leftSection=DashIconify(icon="carbon:download", width=16)),
+                                                                                            dmc.Button("Clear", id="clear-graph", variant="outline", color="gray", fz="sm", radius="md", leftSection=DashIconify(icon="carbon:eraser", width=16)),
+                                                                                        ],
+                                                                                    ),
                                                                                 ],
                                                                             ),
-                                                                        ],
-                                                                    ),
-                                                                    dmc.Divider(variant="solid", color="#f1f3f5", px="sm"),
-                                                                    html.Div(id="graph-container", style={"flex": "1", "width": "100%", "minHeight": "0", "paddingBottom": "10px"}),
-                                                                    html.Div(id="best-model-error", style={"display": "none"}),
+                                                                            dmc.Divider(variant="solid", color="#f1f3f5", px="sm"),
+                                                                            html.Div(id="graph-container", style={"flex": "1", "width": "100%", "minHeight": "0", "paddingBottom": "10px"}),
+                                                                        ]
+                                                                    )
+                                                                ]
+                                                            ),
+                                                        ]
+                                                    ),
+                                                    # NEW: LLM Chatbot Sidebar
+                                                    dmc.GridCol(
+                                                        span=4,
+                                                        children=[
+                                                            elevated_card(
+                                                                height="100%",
+                                                                children=[
+                                                                    dmc.Stack(
+                                                                        gap="lg",
+                                                                        children=[
+                                                                            dmc.Group(gap="sm", children=[
+                                                                                DashIconify(icon="carbon:bot", width=24, color="var(--primary-blue)"),
+                                                                                dmc.Text("Forecast Assistant", fw=700, fz="lg", className="gradient-text"),
+                                                                            ]),
+                                                                            dmc.Divider(color="#f1f3f5"),
+                                                                            # Chat Display Area
+                                                                            dmc.ScrollArea(
+                                                                                h=400, offsetScrollbars=True,
+                                                                                children=html.Div(id="chat-history", children=[
+                                                                                    dmc.Alert(
+                                                                                        "I can apply business constraints on your forecast data ! Feel free to ask any business rules to apply",
+                                                                                        title="Ready to Assist", color="indigo", variant="light", radius="md"
+                                                                                    )
+                                                                                ])
+                                                                            ),
+                                                                            # Input Area
+                                                                            dmc.Textarea(
+                                                                                id="llm-constraint-input",
+                                                                                placeholder="Enter business constraints in plain English...",
+                                                                                minRows=3, radius="md", variant="filled",
+                                                                                styles={"input": {"backgroundColor": "#f1f3f5", "border": "none"}}
+                                                                            ),
+                                                                            dmc.Button(
+                                                                                "Apply Constraints", id="apply-llm-btn",
+                                                                                fullWidth=True, radius="md",
+                                                                                leftSection=DashIconify(icon="carbon:send-alt-filled"),
+                                                                                style={"background": "var(--primary-gradient)", "fontWeight": 700}
+                                                                            ),
+                                                                            dmc.Button(
+                                                                                "Reset Forecast", id="reset-llm-btn",
+                                                                                variant="outline", color="gray", fullWidth=True, radius="md"
+                                                                            )
+                                                                        ]
+                                                                    )
                                                                 ]
                                                             )
                                                         ]
-                                                    ),
+                                                    )
                                                 ]
                                             )
-                                        ],
+                                        ]
                                     ),
 
                                     # --- TAB: ARTIFACTS ---
