@@ -58,10 +58,26 @@ def _now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _emit_status(total, done, message, completed=False):
-    """Robust status writer for UI with percentage calculation"""
     if os.path.exists(STOP_FLAG):
+        # Update progress for status bar
+        stop_data = {
+            "percent": int((done / total) * 100) if total > 0 else 0,
+            "message": "🛑 Execution Stopped by User",
+            "status": "stopped",
+            "timestamp": datetime.now().isoformat()
+        }
+        try:
+            directory = os.path.dirname(PROGRESS_JSON)
+            fd, temp_path = tempfile.mkstemp(dir=directory, text=True)
+            with os.fdopen(fd, 'w') as fh: json.dump(stop_data, fh)
+            os.replace(temp_path, PROGRESS_JSON)
+        except: pass
+            
+        # Write termination log to physical file
+        _write_debug("🛑 Execution STOPPED: Thread terminating immediately.")
         raise InterruptedError("Stopped by user")
 
+    # 2. Existing percentage logic
     percent = 0
     if total > 0:
         percent = int((done / total) * 100)
@@ -79,20 +95,16 @@ def _emit_status(total, done, message, completed=False):
         data["completed_at"] = datetime.now().isoformat()
         
     try:
+        # 3. Atomic Write
         directory = os.path.dirname(PROGRESS_JSON)
         fd, temp_path = tempfile.mkstemp(dir=directory, text=True)
-        
-        with os.fdopen(fd, 'w') as fh:
-            json.dump(data, fh)
-            
-        # Atomic swap (This replaces the file instantly)
+        with os.fdopen(fd, 'w') as fh: json.dump(data, fh)
         os.replace(temp_path, PROGRESS_JSON)
     except Exception as e:
         print(f"[Engine] Status Write Error: {e}")
 
 def _write_debug(msg: str) -> None:
     try:
-        # Use UTF-8 for debug log as well
         with open(DEBUG_LOG, "a", encoding="utf-8") as f:
             f.write(f"[{_now_ts()}] {msg}\n")
     except Exception:
@@ -130,7 +142,6 @@ def parse_uploaded_data_robust(content_string) -> Dict[str, pd.DataFrame]:
             
         decoded = base64.b64decode(content_string)
         
-        # Try Excel first
         try:
             xls = pd.ExcelFile(io.BytesIO(decoded))
             return {s: xls.parse(s) for s in xls.sheet_names}
@@ -255,14 +266,13 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                       selected_x_cols: Optional[List[str]] = None, 
                       x_clean_weekday: str = "median", x_clean_weekend: str = "zero",
                       forecast_horizon: int = 60, 
-                      test_window: int = 30, # <--- ADDED
+                      test_window: int = 30, 
                       x_file_contents: Optional[str] = None, 
                       selected_regions: list = None) -> None:
     
     start_time = time.time()
     total_tasks = 0
     try:
-        # 1. Cleanup old flags
         if os.path.exists(STOP_FLAG): os.remove(STOP_FLAG)
         if os.path.exists(DONE_FLAG): os.remove(DONE_FLAG)
 
@@ -272,7 +282,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
         if not dfs:
             _write_debug("Error: Uploaded file parsing returned no sheets. Please check the file format (CSV/Excel).")
-            # Try legacy parse_uploaded_data just in case, if imported
             try:
                 from utils.forecasting import parse_uploaded_data
                 dfs = parse_uploaded_data(file_contents_norm)
@@ -283,44 +292,38 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                 _write_debug("CRITICAL: Failed to parse input file. Aborting.")
                 return
 
-        # 2. Parse X File (If provided via new argument)
         df_x_global = None
         if x_file_contents:
              _write_debug("Loading external features (X) file...")
              parsed_x = parse_uploaded_data_robust(x_file_contents)
              if parsed_x:
-                 # Assume first sheet has the features
                  sheet_x = list(parsed_x.keys())[0]
-                 df_x_global = parsed_x[sheet_x] # It's already a DF from our robust parser
+                 df_x_global = parsed_x[sheet_x] 
                  _write_debug(f"SUCCESS: Loaded {len(df_x_global.columns)} external features from '{sheet_x}'.")
              else:
                  _write_debug("Error: Failed to parse external features file.")
 
-        # Write initial progress
         _emit_status(0, 0, "Initializing forecasting engine...")
 
         predictions_by_sheet: Dict[str, Any] = {}
         figs_by_sheet: Dict[str, Any] = {}
         
-        # --- NEW: Calculate Total Steps (5 Steps per Metric) ---
         for sheet in (selected_sheets_list or []):
             df_raw = dfs.get(sheet)
             if df_raw is None: continue
-            
-            # Determine metric count for this sheet
             if selected_metrics:
                 m_count = len([m for m in selected_metrics if m in df_raw.columns])
             else:
                 m_count = len([c for c in df_raw.columns if pd.api.types.is_numeric_dtype(df_raw[c])])
             
-            total_tasks += (m_count * 5) # <--- MULTIPLY BY 5 STAGES
+            total_tasks += (m_count * 5) 
         
         current_progress = 0 
         done_count = 0
 
-        # 4) Iterate sheets -> metrics
+        # Console log begin
         for sheet in (selected_sheets_list or []):
-            _write_debug(f"--- Processing Sheet: {sheet} ---")
+            _write_debug(f" Processing Sheet: {sheet} ")
             df_raw = dfs.get(sheet)
             if df_raw is None:
                 _write_debug(f"Error: Sheet '{sheet}' missing in parsed sheets.")
@@ -328,7 +331,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                 figs_by_sheet[sheet] = {}
                 continue
 
-            # detect date column
             date_col = None
             for c in df_raw.columns:
                 if "date" in str(c).lower():
@@ -350,7 +352,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     figs_by_sheet[sheet] = {}
                     continue
 
-            # determine metrics to run (authoritative)
+            # metrics to run
             if selected_metrics and len(selected_metrics) > 0:
                 metrics_to_run = [m for m in selected_metrics if m in df.columns]
             else:
@@ -365,7 +367,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
             for metric in metrics_to_run:                
 
-                # --- STAGE 1: Sanitization (Start) ---
+                # Stage 1 Sanitization 
                 _emit_status(total_tasks, current_progress, f"Stage 1/5: Sanitizing {sheet}/{metric}...")
                 time.sleep(1.0)
                 current_progress += 1
@@ -378,7 +380,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     accuracy = None
                     _write_debug(f"Analysis started for Target: {metric}")
 
-                    #  DATA SANITIZATION (Target Y)
+                    # Data Sanitation
                     dh = DataHandling(
                         min_points=30,
                         allow_negative=False,
@@ -392,7 +394,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     )
 
                     y_config = TreatmentAnalyzer.analyze_series(raw_series, is_target=True)
-                    # Formatted readable log instead of raw dict
                     _write_debug(f"Data Profile: {y_config.get('outlier_treatment', 'none')} outliers, {y_config.get('weekday_treatment', 'none')} imputation.")
 
                     history_len = len(raw_series)
@@ -404,41 +405,36 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     else:
                         _write_debug(f"Forecasting Horizon strictly set to: {safe_horizon} days.")
 
-                    # NOW INITIALIZE THE ENGINE
+                    # Forecasting Engine initialization
                     fe = None
                     try:
-                        # UPDATED: Pass the dynamic test_window to test_size
                         fe = ForecastingEngine(freq="D", horizon=safe_horizon, test_size=test_window) 
                         _write_debug(f"Engine initialized: Horizon={safe_horizon}, Test Window={test_window}")
                     except Exception as e:
                         _write_debug(f"Error: Engine initialization failed: {e}")
 
 
-                    # --- STAGE 2: Feature Engineering ---
+                    # Stage 2: Feature Engineering 
                     _emit_status(total_tasks, current_progress, f"Stage 2/5: Processing Features...")
                     time.sleep(1.0)
                     current_progress += 1
 
-                    # --- FIX 3: HANDLE EXTERNAL X VARIABLES ---
                     X_train_ext = None
                     X_test_ext = None
                     
                     if selected_x_cols:
                         valid_x_local = [c for c in selected_x_cols if c in df.columns and c != metric]
                         
-                        # 2. Check if X cols are in Separate X DF (Two File Mode)
                         valid_x_global = []
                         if df_x_global is not None:
                             valid_x_global = [c for c in selected_x_cols if c in df_x_global.columns]
                         
-                        # Decide source
                         df_source = None
                         valid_x = []
                         
                         if valid_x_global:
                             df_source = df_x_global.copy()
                             valid_x = valid_x_global
-                            # Align Global X Dates to Target Dates
                             x_date_col = next((c for c in df_source.columns if "date" in str(c).lower()), None)
                             if x_date_col:
                                 df_source[x_date_col] = pd.to_datetime(df_source[x_date_col])
@@ -448,23 +444,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                 _write_debug("Warning: No date column in X file. Alignment might fail.")
                                 
                         elif valid_x_local:
-                            df_source = df.copy() # Use target DF
+                            df_source = df.copy()
                             valid_x = valid_x_local
                             _write_debug(f"Using Features from main file: {len(valid_x)} variables found.")
 
                         if df_source is not None and valid_x:
-                            # Clean X using the requested method
                             x_configs = TreatmentAnalyzer.analyze_dataframe(df_source[valid_x])
                             # _write_debug(f"{sheet}/{metric}: Features X Treatment Profiles -> {x_configs}") # Removed verbose dict
                             
-                            # --- UPDATED: PASS CONFIGS INSTEAD OF STRINGS ---
                             df_x_clean = dh.impute_exogenous(
                                 df_source[valid_x], 
                                 valid_x, 
                                 treatment_configs=x_configs
                             )
                             
-                            # Align to Target Index (Reindexing handles missing dates/mismatches)
                             df_x_clean = df_x_clean.reindex(df.index).ffill().fillna(0)
                         else:
                             _write_debug(f"Warning: No valid X variables found despite selection.")
@@ -476,7 +469,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     test_series_raw = test_raw 
                     full_clean_series = dh.impute_train(raw_series, config=y_config)                  
 
-                    # --- FIX 4: ALIGN EXTERNAL X TO SPLITS ---
                     if selected_x_cols and 'df_x_clean' in locals():
                         X_train_ext = df_x_clean.reindex(train_series.index)
                         X_train_ext = X_train_ext.fillna(method='ffill').fillna(0)
@@ -514,11 +506,10 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     zero_ratio = float((train_series == 0).sum()) / max(1, n_points)
                     # _write_debug(f"{sheet}/{metric}: points={n_points}, zero_ratio={zero_ratio:.2%}")
 
-                    # -Univariate Model
+                    # Univariate Model
                     _emit_status(total_tasks, current_progress, f"Stage 3/5: Running Univariate Models...")
                     current_progress += 1
 
-                    # --- MODEL ROUTING BASED ON DATA SHAPE ---
                     mean_val = float(train_series.mean())
                     std_val = float(train_series.std())
                     cv = std_val / (mean_val + 1e-6)
@@ -526,13 +517,13 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     # model allowlist (will be pruned)
                     allowed_models = {"TBATS", "Prophet", "LightGBM", "HistGB", "ExpSmoothing", "SARIMAX", "Croston"}
 
-                    # ---- LOW VOLUME METRICS ----
+                    # Low volume series
                     if mean_val < 10:
                         _write_debug(f"Volume Low (Mean < 10): Disabling Prophet & SARIMAX.")
                         allowed_models.discard("Prophet")
                         allowed_models.discard("SARIMAX")
 
-                    # ---- ZERO HEAVY SERIES ----
+                    # Zero heavy series
                     if zero_ratio > 0.8:
                         _write_debug(f"Sparse Data Detected (>80% zeros): Disabling Prophet.")
                         allowed_models.discard("Prophet")
@@ -545,11 +536,9 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         base_res = fe._run_sma(train_series, test_series_raw)
                         b_scores = calculate_performance_metrics(test_series_raw, base_res.predictions_test)
                         
-                        # Capture for later
                         baseline_wmape = b_scores["wmape"]
                         baseline_test_pred = base_res.predictions_test
 
-                        # Log consistently as "Baseline_SMA"
                         log_experiment(
                             sheet, metric, "Univariate", "Baseline_SMA", 
                             b_scores["wmape"], b_scores["mae"], b_scores["mape"], b_scores["accuracy"]
@@ -565,7 +554,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     
                     original_models = fe.models.copy()
 
-                    # apply gating to forecasting engine
+                    # gating for forecasting engine
                     if fe is not None:
                         models_to_run = {
                             "TBATS": fe._run_tbats,
@@ -580,7 +569,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         fe.models = models_to_run.copy()
                         _write_debug(f"Allowed Models: {list(fe.models.keys())}")
 
-                    # High volatility → SARIMAX unstable
+                    # High volatility series
                     if cv > 1.5 and fe is not None:
                         fe.models.pop("SARIMAX", None)
                         _write_debug(f"High Volatility: Disabling SARIMAX.")
@@ -596,7 +585,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                             }
                         metric_completed = True
                         sheet_figs[metric] = {}
-                        current_progress += 2 # Skip remaining stages
+                        current_progress += 2 
                         continue
 
                     if n_points < 90 or (zero_ratio > 0.7 and mean_val < 5):
@@ -634,7 +623,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         )
 
                         sheet_metrics[metric] = {
-                            "best_model": "Baseline_SMA", # Consistent Name
+                            "best_model": "Baseline_SMA",
                             "wmape": scores["wmape"],
                             "accuracy": scores["accuracy"],
                             "adi": adi_val, "cv2": cv2_val, "demand_type": demand_type,
@@ -647,29 +636,31 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         metric_success = True
                         sheet_figs[metric] = {} 
                         _write_debug(f"SUCCESS: Completed {metric} using Baseline Fallback.")
-                        current_progress += 2 # Complete skipped stages
+                        current_progress += 2 
                         continue
 
-                    # ---- UNIVARIATE MODEL SELECTION (EXTERNAL TEST, AUTHORITATIVE) ----
+                    # Univariate Model Selection
                     try:
                         best_name = None
                         best_wmape = float("inf")
                         best_test_pred = None
                         accuracy = None
                         
-                        _write_debug("Evaluating Univariate Models...")
+                        _write_debug("Evaluating Univariate Models")
 
-                        # 1) SELECT BEST MODEL USING EXTERNAL TEST
                         for model_name in fe.models.keys():
+
+                            if os.path.exists(STOP_FLAG):
+                                raise InterruptedError("Stopped by user")
+                            
                             try:
-                                # Univariate models usually don't need imputed test features, just index
                                 test_pred = fe.predict_external_test(
                                     model_name,
                                     train_series,
                                     test_series_raw.index
                                 )
 
-                                # Honest Scoring: Only score against non-NaN raw data
+                                # Scoring against non-NaN raw data
                                 common_idx = test_series_raw.index.intersection(test_pred.index)
                                 effective_test = test_series_raw.loc[common_idx].dropna()
                                 effective_test = effective_test[effective_test != 0]
@@ -703,7 +694,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         external_wmape = best_wmape
                         test_pred_series = best_test_pred
 
-                        # 2) COMPUTE ACCURACY (OPTIONAL GATING)
                         common_idx = test_series_raw.index.intersection(test_pred_series.index)
                         effective_test = test_series_raw.loc[common_idx].dropna()
                         effective_test = effective_test[effective_test != 0]
@@ -717,7 +707,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                             accuracy = None
 
 
-                        # 3) REFIT BEST MODEL ON FULL HISTORY FOR FORECAST
+                        # refit best model
                         forecast_series = None
                         runner = fe.models.get(best_name)
 
@@ -728,10 +718,8 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                             if refit_res is not None and hasattr(refit_res, "forecast"):
                                 forecast_series = refit_res.forecast.clip(lower=0.0)
 
-                                # 2. Manually Slice the Output to the Safe Horizon
                                 _write_debug(f"Final forecast series length: {len(forecast_series)}")
 
-                                # 3. Re-index dates
                                 horizon = len(forecast_series)
                                 last_observed_date = raw_series.index.max()
 
@@ -748,7 +736,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     except Exception as model_err:
                         _write_debug(f"Error: Univariate selection failed ({model_err}). Reverting to Baseline.")
 
-                        # Generate SMA Predictions
+                        # SMA Predictions
                         train_model_output = fe.run_fallback_model(train_series)
                         fallback_val = float(train_model_output.iloc[0]) if not train_model_output.empty else 0.0
                         
@@ -760,7 +748,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
                         scores = calculate_performance_metrics(test_series_raw, test_pred_series)
                         
-                        # CHANGE: Log consistently as "Baseline_SMA"
                         log_experiment(
                             sheet, metric, "Univariate", "Baseline_SMA", 
                             scores["wmape"], scores["mae"], scores["mape"], scores["accuracy"]
@@ -781,7 +768,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         )
 
                         sheet_metrics[metric] = {
-                            "best_model": "Baseline_SMA", # Consistent Name
+                            "best_model": "Baseline_SMA",
                             "wmape": None, "accuracy": None,
                             "adi": adi_val, "cv2": cv2_val, "demand_type": demand_type,
                             "records": records,
@@ -791,11 +778,11 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         metric_completed = True
                         metric_success = True
                         sheet_figs[metric] = {}
-                        current_progress += 2 # Skip remaining
+                        current_progress += 2
                         continue
 
-                    # --- STAGE 4: Multivariate Modeling ---
-                    _emit_status(total_tasks, current_progress, f"Stage 4/5: Evaluating Multivariate Models...")
+                    # Stage 4: Multivariate Pipeline 
+                    _emit_status(total_tasks, current_progress, f"Stage 4/5: Evaluating Multivariate")
                     current_progress += 1
 
                     apply_multivariate = False
@@ -811,20 +798,19 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                             f"Note: Accuracy {accuracy_pct:.1f}% >= 100%. Skipping Multivariate."
                         )
 
-                    # MULTIVARIATE ESCALATION
+                    # Multivariate Escalation
                     if apply_multivariate:
 
                         if selected_x_cols:
                              _write_debug(f"Starting Multivariate Pipeline. Drivers: {len(selected_x_cols)} variables.")
-                             print(f"\n[INFO] 🚀 STARTING MULTIVARIATE PIPELINE for Target: {metric}")
-                             print(f"[INFO] ℹ️  Active External Drivers (X): {selected_x_cols}")
+                             print(f"\n[INFO] STARTING MULTIVARIATE PIPELINE for Target: {metric}")
+                             print(f"[INFO] Active External Drivers (X): {selected_x_cols}")
                              
                              # Check alignment (Debug info)
                              common_idx = train_series.index.intersection(X_train_ext.index)
-                             print(f"[INFO] 📊 Aligned Training Samples: {len(common_idx)}")
+                             print(f"[INFO] Aligned Training Samples: {len(common_idx)}")
                         
                         mv = MultivariateEngine(selected_regions=selected_regions)
-                        # --- FIX 5: PASS EXTERNAL X VARIABLES TO MULTIVARIATE ENGINE ---
                         mv_res = mv.run_multivariate(
                             train_series, 
                             test_series_clean, 
@@ -862,23 +848,21 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                             mv_test = mv_res["test"]
                             best_name = mv_res["best_model"]
 
-                            # 1. Prepare Final Series (Clip + Business Rules)
+                            # Final Series (Clip + Business Rules)
                             test_pred_series = mv_res["test_pred"].clip(lower=0.0)
                             forecast_series = mv_res["forecast"].clip(lower=0.0)
 
                             test_pred_series = dh.apply_business_rules(test_pred_series)
                             forecast_series = dh.apply_business_rules(forecast_series)
-
-                            # 2. Calculate Final Metrics
                             scores = calculate_performance_metrics(mv_test, test_pred_series)
                             
-                            # 3. Log the Winner
+                            # Logging Winner
                             log_experiment(
                                 sheet, metric, "Multivariate", best_name,
                                 scores["wmape"], scores["mae"], scores["mape"], scores["accuracy"]
                             )
 
-                            # 4. Build Records (MOVED UP TO FIX CRASH)
+                            # Build Records
                             records = build_records(
                                 train_series=train_series,
                                 test_series=test_series_raw,
@@ -888,10 +872,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                 df_x_clean=df_x_clean if 'df_x_clean' in locals() else None  
                             )
 
-                            # 5. Inject External Variables into Records (Now safe to run)
                             if selected_x_cols and 'df_x_clean' in locals():
-                                # Create a lookup dict for all X values by Date
-                                # We use the aligned X_train_ext and X_test_ext or the full df_x_clean
                                 x_lookup = df_x_clean.to_dict(orient='index')
                                 
                                 for rec in records:
@@ -901,7 +882,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
                             metric_finalized = True 
 
-                            # 6. Save to Sheet Metrics
+                            # Save to Sheet Metrics
                             sheet_metrics[metric] = {
                                 "best_model": best_name,
                                 "wmape": scores["wmape"],
@@ -925,7 +906,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                 f"Multivariate ({mv_res.get('best_model')}) did not improve results. Keeping Univariate."
                             )
 
-                    # --- STAGE 5: Finalizing ---
+                    # Stage 5: Finalizing 
                     _emit_status(total_tasks, current_progress, f"Stage 5/5: Finalizing Forecast...")
                     current_progress += 1
                                                             
@@ -992,23 +973,18 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
                     if baseline_wmape is not None and metric_success and metric in sheet_metrics:
                         
-                        # 1. Get current winner's score
                         current_best_wmape = sheet_metrics[metric].get("wmape")
                         if current_best_wmape is None: 
                             current_best_wmape = float('inf')
 
-                        # 2. Compare: If Baseline is better (Lower WMAPE is better)
+                        # Compare Baseline  with current best 
                         if baseline_wmape < current_best_wmape:
                             _write_debug(f"Notice: Baseline Model (SMA) outperformed advanced models. Reverting.")
                             
-                            # A. Refit on COMPLETE Data (Train + Test) to get future forecast
-                            final_base_res = fe._run_sma(full_clean_series, None)
-                            
-                            # B. Calculate final scores for the Baseline
-                            # (We use the honest test prediction captured earlier)
+                            # Refit on COMPLETE Data (Train + Test) 
+                            final_base_res = fe._run_sma(full_clean_series, None)                            
                             base_scores = calculate_performance_metrics(test_series_raw, baseline_test_pred)
 
-                            # C. Build Records
                             records = build_records(
                                 train_series=train_series,
                                 test_series=test_series_raw,
@@ -1018,7 +994,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                 df_x_clean=df_x_clean if 'df_x_clean' in locals() else None  
                             )
 
-                            # D. Overwrite the Winner
+                            # Overwriting Winner
                             sheet_metrics[metric] = {
                                 "best_model": "Baseline_SMA",
                                 "wmape": base_scores["wmape"],
@@ -1033,7 +1009,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                 "x_treatment": x_configs if 'x_configs' in locals() else {},
                             }
                             
-                            # E. Update 'best_name' so the graph title is correct
                             best_name = "Baseline_SMA"
                             forecast_series = final_base_res.forecast
 
@@ -1066,7 +1041,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     metric_completed = True
                     metric_success = False
                     sheet_figs[metric] = {}
-                    # Catch up progress on failure
                     remaining = (current_progress % 5)
                     if remaining != 0: current_progress += (5 - remaining)
                 
@@ -1077,7 +1051,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     if metric_completed:
                         done_count += 1
                         
-                        # Fix: Ensure progress aligns with metric completion
                         remaining = (current_progress % 5)
                         if remaining != 0: current_progress += (5 - remaining)
 
@@ -1089,7 +1062,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
             predictions_by_sheet[sheet] = {"metrics": sheet_metrics}
             figs_by_sheet[sheet] = sheet_figs
 
-            # write partial outputs for UI responsiveness
             try:
                 with open(PRED_JSON, "w") as fh:
                     json.dump(predictions_by_sheet, fh, default=str, indent=2)
@@ -1169,7 +1141,6 @@ def read_predictions_and_figs():
     return preds, figs
 
 def read_progress() -> Dict[str, Any]:
-    # 1. Read the JSON first to get the dynamic message (with time)
     progress_data = {"percent": 0, "message": "Waiting..."}
     if os.path.exists(PROGRESS_JSON):
         try:
@@ -1178,7 +1149,6 @@ def read_progress() -> Dict[str, Any]:
         except:
             pass
 
-    # 2. If Done Flag exists, ensure percent is 100 but KEEP the message from JSON
     if os.path.exists(DONE_FLAG):
         progress_data["percent"] = 100
         if "completed" not in progress_data.get("message", "").lower():
