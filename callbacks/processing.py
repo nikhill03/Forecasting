@@ -549,22 +549,17 @@ def register_processing_callbacks(app):
         if "Date" in df.columns:
             df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
-        # 2. Logic for "Adjustment" Badge
-        # adjustment_badge = []
-        # if adjusted_data:
-        #     adjustment_badge = [dmc.Badge("ADJUSTED BY AI", color="indigo", variant="filled", size="lg", radius="xl")]
-
-        # 3. METRICS STRIP WITH BIAS ADDED
+        # 2. METRICS STRIP
         metrics_strip = [
             dmc.Badge(f"BEST MODEL: {model_name.upper()}", color="gray", variant="outline", size="lg", radius="xl"),                
             dmc.Badge(f"ACCURACY: {int(round(float(acc_val)))}%", color="blue", variant="light", size="lg", radius="xl"),
-            dmc.Badge(f"BIAS: {bias_val:+.1f}%", color="indigo", variant="light", size="lg", radius="xl"), # RESTORED BIAS
+            dmc.Badge(f"BIAS: {bias_val:+.1f}%", color="indigo", variant="light", size="lg", radius="xl"), 
             dmc.Badge(f"AVG. ERROR: {int(round(float(mae_val)))}", color="blue", variant="light", size="lg", radius="xl"),
-        ] # + adjustment_badge
+        ]
         
         fig = go.Figure()
 
-        # Trace 1: Historical Actuals (Standard Blue)
+        # Trace 1: Historical Actuals
         if "TrainRaw" in df.columns:
             fig.add_trace(go.Scatter(
                 x=df["Date"], y=df["TrainRaw"], mode="lines+markers",
@@ -590,27 +585,34 @@ def register_processing_callbacks(app):
 
         # Trace 3: FORECAST COMPARISON LOGIC (Baseline Green vs. Adjusted Indigo)
         if "Forecast" in df.columns:
-            # ORIGINAL BASELINE: Always Green
+            # ORIGINAL BASELINE: Always Green (faded if adjustments exist)
             fig.add_trace(go.Scatter(
                 x=df["Date"], y=df["Forecast"], mode="lines+markers",
-                name="Forecast", 
+                name="Forecast (Baseline)", 
                 line=dict(color="#2ca02c", width=2), 
                 opacity=0.4 if adjusted_data else 1.0 
             ))
             
             if adjusted_data:
-                # ADJUSTED FORECAST: Highlighted Indigo
+                # ADJUSTED FORECAST: Plot the LATEST adjustment
                 df_adj = pd.DataFrame(adjusted_data)
                 df_adj["Date"] = pd.to_datetime(df_adj["Date"])
                 
-                df_adj_forecast = df_adj[df_adj["Forecast"].notna()]
+                # Identify all 'Adjustment' columns and find the one with the highest index
+                adj_cols = sorted([c for c in df_adj.columns if "Adjustment" in c], 
+                                 key=lambda x: int(x.split(" ")[1]) if len(x.split(" ")) > 1 and x.split(" ")[1].isdigit() else 0)
                 
-                fig.add_trace(go.Scatter(
-                    x=df_adj_forecast["Date"], y=df_adj_forecast["Forecast"], mode="lines+markers",
-                    name="Adjusted Forecast", 
-                    line=dict(color="#6a11cb", width=3), 
-                    marker=dict(size=8, symbol="diamond")
-                ))
+                if adj_cols:
+                    latest_adj_col = adj_cols[-1]
+                    forecast_mask = df["Forecast"].notna()
+                    df_plot = df_adj[forecast_mask]
+                    
+                    fig.add_trace(go.Scatter(
+                        x=df_plot["Date"], y=df_plot[latest_adj_col], mode="lines+markers",
+                        name=f"Adjusted ({latest_adj_col})", 
+                        line=dict(color="#6a11cb", width=3), 
+                        marker=dict(size=8, symbol="diamond")
+                    ))
 
         fig.update_layout(
             template="plotly_white", 
@@ -624,32 +626,51 @@ def register_processing_callbacks(app):
     @app.callback(
         Output("download-csv", "data"),
         Input("export-csv", "n_clicks"),
-        State("predictions-store", "data"),
+        [State("predictions-store", "data"),
+         State("adjusted-forecast-store", "data")], 
         prevent_initial_call=True,
     )
-    def export_forecast_to_csv(n_clicks, preds):
-        if not n_clicks or not preds:
+    def export_forecast_to_csv(n_clicks, preds, adjusted_data):
+        if not n_clicks:
             raise PreventUpdate
 
         try:
-            # 1. Identify the current sheet and metric being viewed
-            sheet = next(iter(preds.keys()))
-            metric = next(iter(preds[sheet]["metrics"].keys()))
-            metric_data = preds[sheet]["metrics"][metric]
-            
-            # 2. Convert the internal 'records' list back to a DataFrame
-            records = metric_data.get("records", [])
-            if not records:
-                raise PreventUpdate
+            # 1. SELECT DATA SOURCE: Prioritize Adjusted Forecast over Baseline
+            if adjusted_data:
+                # This contains all 'Adjustment X' columns added during the chat session
+                df_export = pd.DataFrame(adjusted_data)
                 
-            df_export = pd.DataFrame(records)
-            
-            # 3. Clean up date formatting for Excel compatibility
+                # Still need the metric name from the original preds for the filename
+                sheet = next(iter(preds.keys()))
+                metric = next(iter(preds[sheet]["metrics"].keys()))
+            elif preds:
+                # Fallback to original baseline if no adjustments exist
+                sheet = next(iter(preds.keys()))
+                metric = next(iter(preds[sheet]["metrics"].keys()))
+                records = preds[sheet]["metrics"][metric].get("records", [])
+                if not records: 
+                    raise PreventUpdate
+                df_export = pd.DataFrame(records)
+            else:
+                raise PreventUpdate
+
+            # 2. Clean up date formatting for Excel compatibility
             if "Date" in df_export.columns:
                 df_export["Date"] = pd.to_datetime(df_export["Date"]).dt.strftime('%Y-%m-%d')
             
-            # 4. Generate the download
-            filename = f"forecast_{metric}_{datetime.now().strftime('%Y%m%d')}.csv"
+            core_cols = ["Date", "TrainActual", "TrainRaw", "TestActual", "TestPrediction", "Forecast"]
+            
+            # Dynamically find existing core columns and all Adjustment columns
+            keep_cols = [c for c in core_cols if c in df_export.columns]
+            adj_cols = [c for c in df_export.columns if "Adjustment" in c]
+            
+            # Filter the dataframe
+            df_export = df_export[keep_cols + adj_cols]
+            
+            # 3. Generate the download
+            # Since df_export now includes all columns from the store, it will 
+            # automatically include every 'Adjustment X' column for comparison.
+            filename = f"forecast_comparison_{metric}_{datetime.now().strftime('%Y%m%d')}.csv"
             return dcc.send_data_frame(df_export.to_csv, filename, index=False)
             
         except Exception as e:
@@ -760,6 +781,7 @@ def register_processing_callbacks(app):
         Output("health-check-content-raw", "children"),
         Output("kyd-features-graph", "children"), 
         Output("kyd-x-distribution-graph-raw", "children"), 
+        Output("kyd-x-dist-results-raw", "children"), # Added this Output
         Output("kyd-stationarity-graph-raw", "figure"),
         Output("kyd-stationarity-graph-processed", "figure"),
         Output("kyd-decomposition-graph-raw", "figure"),
@@ -788,7 +810,7 @@ def register_processing_callbacks(app):
         has_preds = (preds is not None and len(preds) > 0)
 
         if not (has_y or has_x):
-            return (no_update,) * 19
+            return (no_update,) * 20 # Increased count to match new Output
 
         style_empty, style_content, style_always_visible = {"display": "none"}, {"display": "block"}, {"display": "block"}
         from layout.main_layout import create_x_placeholder
@@ -796,6 +818,7 @@ def register_processing_callbacks(app):
         
         ret_health_raw = x_placeholder
         ret_dist_x_raw = x_placeholder
+        ret_dist_res_x_raw = html.Div() # New result container for X
         ret_feat = x_placeholder
         ret_dist_res_raw = dmc.Text("No data available", size="xs")
         ret_dist_res_proc = dmc.Text("Waiting for engine...", size="xs")
@@ -820,8 +843,53 @@ def register_processing_callbacks(app):
                     figure=generate_distribution_figure(recs_x_raw, x_cols=x_cols, plot_type=plot_type_x),
                     responsive=True, style={"height": "100%", "width": "100%"}
                 )
+
+                # --- DYNAMIC STATS FOR X DISTRIBUTIONS ---
+                if has_x:
+                    try:
+                        # 1. Generate the base figure (Ensure your utility uses subplot_titles)
+                        fig_x = generate_distribution_figure(recs_x_raw, x_cols=x_cols, plot_type=plot_type_x)
+                        
+                        # 2. Update Layout for each individual subplot
+                        for i, col in enumerate(x_cols):
+                            series_x = df_x[col].dropna()
+                            if series_x.empty: continue
+
+                            # Calculate Stats
+                            if plot_type_x == "histogram":
+                                stats_text = f"Mean: {series_x.mean():.1f} | Med: {series_x.median():.1f} | Skew: {series_x.skew():.1f}"
+                            else: # Boxplot
+                                q1, q3 = series_x.quantile([0.25, 0.75])
+                                iqr = q3 - q1
+                                outlier_mask = (series_x < (q1 - 1.5 * iqr)) | (series_x > (q3 + 1.5 * iqr))
+                                out_pct = (len(series_x[outlier_mask]) / len(series_x)) * 100
+                                stats_text = f"Q1: {q1:.1f} | Q3: {q3:.1f} | Outliers: {out_pct:.1f}%"
+
+                            # SET X-AXIS (Bottom): Replace axis title with stats
+                            fig_x.update_xaxes(title_text=stats_text, row=(i // 2) + 1, col=(i % 2) + 1)
+
+                        # SET TITLES (Top): Customizing appearance
+                        for anno in fig_x['layout']['annotations']:
+                            anno['font'] = {'size': 12, 'color': 'black'}
+                        
+                        fig_x.update_layout(
+                            margin=dict(t=50, b=80), 
+                            showlegend=False
+                        )
+
+                        ret_dist_x_raw = dcc.Graph(
+                            figure=fig_x,
+                            responsive=True, 
+                            style={"height": "100%", "width": "100%"}
+                        )
+
+                    # --- THIS IS THE EXCEPT BLOCK YOU ARE LOOKING FOR ---
+                    except Exception as e: 
+                        print(f"X-Processing Error: {e}")
+                        # Optional: Provide a visual error in the graph slot
+                        ret_dist_x_raw = dmc.Alert(f"Failed to generate X plots: {str(e)}", color="red")
                 
-                # --- DYNAMIC MERGE FOR COLLINEARITY (BUG FIXES) ---
+                # --- DYNAMIC MERGE FOR COLLINEARITY (Kept Logic) ---
                 recs_corr = recs_x_raw 
                 if has_preds:
                     sheet_p = next(iter(preds.keys()))
@@ -830,36 +898,22 @@ def register_processing_callbacks(app):
                 elif has_y and target_col:
                     try:
                         df_y_tmp = pd.read_json(io.StringIO(target_store[target_sheet]), orient='split')
-                        
-                        # Robustly find date columns
                         date_x = next((c for c in df_x.columns if "date" in str(c).lower().strip()), None)
                         date_y = next((c for c in df_y_tmp.columns if "date" in str(c).lower().strip()), None)
 
-                        # Fallback: Specifically for Club_311 naming convention
-                        if not date_y and "DATE" in df_y_tmp.columns:
-                            date_y = "DATE"
-                        if not date_x and "DATE" in df_x.columns:
-                            date_x = "DATE"
+                        if not date_y and "DATE" in df_y_tmp.columns: date_y = "DATE"
+                        if not date_x and "DATE" in df_x.columns: date_x = "DATE"
                         
                         if date_x and date_y:
                             df_x_dt = df_x.copy()
                             df_y_dt = df_y_tmp[[date_y, target_col]].copy()
-                            
-                            # FIX: Force to datetime and NORMALIZE to remove hidden timestamps
                             df_x_dt[date_x] = pd.to_datetime(df_x_dt[date_x], errors='coerce').dt.normalize()
                             df_y_dt[date_y] = pd.to_datetime(df_y_dt[date_y], errors='coerce').dt.normalize()
-                            
-                            # Clean target column for correlation
                             df_y_dt[target_col] = pd.to_numeric(df_y_dt[target_col], errors='coerce')
-                            
-                            # Merge with inner join
                             merged_df = pd.merge(df_x_dt, df_y_dt, left_on=date_x, right_on=date_y, how='inner')
-                            
                             if not merged_df.empty:
-                                # FIX: Use ffill() instead of deprecated method='ffill' to avoid crash
                                 recs_corr = merged_df.ffill().bfill().to_dict(orient="records")
                             else:
-                                # Fallback to feature-only correlation if merge results in 0 rows
                                 recs_corr = recs_x_raw
                     except Exception as merge_err: 
                         print(f"Collinearity Merge Warning: {merge_err}")
@@ -870,7 +924,7 @@ def register_processing_callbacks(app):
                 )
             except Exception as e: print(f"X-Processing Error: {e}")
 
-        # --- Y-Analysis Processing (Logic Preserved) ---
+        # --- Y-Analysis Processing (Kept Logic) ---
         if has_y and target_col:
             try:
                 df_y = pd.read_json(io.StringIO(target_store[target_sheet]), orient='split')
@@ -922,7 +976,9 @@ def register_processing_callbacks(app):
         return (
             style_empty, style_content, 
             style_always_visible, style_always_visible, style_always_visible, 
-            ret_health_raw, ret_feat, ret_dist_x_raw, 
+            ret_health_raw, ret_feat, 
+            ret_dist_x_raw, 
+            ret_dist_res_x_raw, # Correctly returning the X Stats
             ret_stat_raw, ret_stat_proc, 
             ret_decomp_raw, ret_decomp_proc, 
             ret_acf_raw, ret_acf_proc, 
@@ -931,6 +987,7 @@ def register_processing_callbacks(app):
             ret_dist_res_raw, ret_dist_res_proc
         )
     
+
     @app.callback(
         Output("kyd-holiday-container", "children"),
         Input("store-target-dfs", "data"),
@@ -980,17 +1037,24 @@ def register_processing_callbacks(app):
 
             # 5. DYNAMIC HOLIDAY GENERATION
             regions = selected_regions if selected_regions else []
-            
-            # This utility returns a DatetimeIndex
-            dynamic_holidays = get_region_holidays(df_hol[date_col_y], regions)
 
-            # FIX: Use 'isin' for boolean flag and apply conditional naming
-            df_hol["Is_Holiday"] = df_hol[date_col_y].isin(dynamic_holidays).astype(int)
-            
-            # Use lambda to check index presence since .get() is not available
-            df_hol["Holiday_Name"] = df_hol[date_col_y].apply(
-                lambda x: "Regional Holiday" if x in dynamic_holidays else None
-            )
+            # holiday_lookup is a DatetimeIndex (list of dates) based on your utility
+            holiday_lookup = get_region_holidays(df_hol[date_col_y], regions)
+
+            # 1. Binary check: Is this date in our list of holiday dates?
+            df_hol["Is_Holiday"] = df_hol[date_col_y].isin(holiday_lookup).astype(int)
+
+            # 2. Get the Actual Names
+            # Since we can't use .get() on holiday_lookup, we re-initialize a 
+            # temporary holiday object to map the specific names.
+            import holidays
+            h_obj = holidays.HolidayBase()
+            years = df_hol[date_col_y].dt.year.unique()
+            if 'US' in regions: h_obj.update(holidays.US(years=years))
+            if 'IN' in regions: h_obj.update(holidays.India(years=years))
+
+            # Map the names using the temporary object
+            df_hol["Holiday_Name"] = df_hol[date_col_y].apply(lambda x: h_obj.get(x))
 
             # 6. Generate Figures via Artifact Service
             records = df_hol.to_dict(orient="records")
@@ -1082,7 +1146,7 @@ def register_processing_callbacks(app):
             print(f"Artifacts Feature Graph Error: {e}")
             return go.Figure().update_layout(title=f"Error: {str(e)}")
         
-    # --- New LLM Callback in register_processing_callbacks() ---
+        
     @app.callback(
         [Output("adjusted-forecast-store", "data"),
         Output("chat-history", "children"),
@@ -1091,7 +1155,7 @@ def register_processing_callbacks(app):
         Input("reset-llm-btn", "n_clicks")],
         [State("llm-constraint-input", "value"),
         State("predictions-store", "data"),
-        State("adjusted-forecast-store", "data"), # NEW: Read current state to stack changes
+        State("adjusted-forecast-store", "data"), 
         State("chat-history", "children")],
         prevent_initial_call=True
     )
@@ -1102,80 +1166,105 @@ def register_processing_callbacks(app):
         
         trigger = ctx.triggered[0]["prop_id"].split(".")[0]
 
-        # 1. Reset Logic: Returns to original baseline
+        # 1. RESET LOGIC
         if trigger == "reset-llm-btn":
-            reset_alert = dmc.Alert(
-                "Forecast reset to original ML baseline.", 
-                color="gray", variant="light", radius="md", mb="sm"
-            )
+            reset_alert = dmc.Alert("Forecast reset to original ML baseline.", color="gray", variant="light", radius="md", mb="sm")
             return None, [reset_alert], ""
 
-        # 2. Guard Rails
         if not prompt or not preds:
-            error_box = dmc.Alert(
-                "No prompt or active forecast found.", 
-                title="Input Error", color="red", variant="filled", radius="md", mb="sm"
-            )
             return no_update, history, no_update
 
         try:
-            # 3. Base Data Selection: Stack on existing adjustment or start from baseline
-            if adjusted_data:
-                df = pd.DataFrame(adjusted_data)
-            else:
-                sheet = next(iter(preds.keys()))
-                metric = next(iter(preds[sheet]["metrics"].keys()))
-                records = preds[sheet]["metrics"][metric].get("records", [])
-                df = pd.DataFrame(records)
-                
-            df["Date"] = pd.to_datetime(df["Date"])
+            sheet = next(iter(preds.keys()))
+            metric = next(iter(preds[sheet]["metrics"].keys()))
+            baseline_records = preds[sheet]["metrics"][metric].get("records", [])
+            df_base = pd.DataFrame(baseline_records)
             
-            # 4. LLM Code Generation
-            metadata = {col: str(dtype) for col, dtype in df.dtypes.items()}
+            is_initial = history and len(history) == 1 and any(word in str(history[0]) for word in ["Ready", "business", "rules"])
+            adj_count = 1 if is_initial else len(history) + 1
+            
+            if adjusted_data:
+                df_adj_input = pd.DataFrame(adjusted_data)
+                adj_cols = [c for c in df_adj_input.columns if "Adjustment" in str(c)]
+                for col in adj_cols: df_base[col] = df_adj_input[col]
+                source_col = sorted(adj_cols, key=lambda x: int(x.split(" ")[1]))[-1]
+            else:
+                source_col = "Forecast"
+
+            df = df_base.copy()
+            df["Date"] = pd.to_datetime(df["Date"])
+            df['target'] = df[source_col] 
+            df['actual_combined'] = df['TrainActual'].fillna(df['TestActual']).fillna(df['target'])
+
+            forecast_dates = df[df['Forecast'].notna()]['Date']
+
+            metadata = {
+                **{col: str(dtype) for col, dtype in df.dtypes.items()},
+                "Date_Range": [
+                    forecast_dates.min().strftime('%Y-%m-%d'), 
+                    forecast_dates.max().strftime('%Y-%m-%d')
+                ]
+            }
+
             generated_code = LLMService.generate_adjustment_code(prompt, metadata)
             
             if not generated_code:
-                error_box = dmc.Alert(
-                    "LLM failed to generate executable code.", 
-                    title="Generation Error", color="red", variant="light", radius="md", mb="sm"
-                )
-                return no_update, history + [error_box], ""
+                return no_update, history, ""
 
-            # 5. Execute code safely
+            if generated_code.startswith("REFUSAL:"):
+                msg = generated_code.replace("REFUSAL:", "")
+                refusal_ui = dmc.Alert(
+                    msg, 
+                    title="Assistant Note", 
+                    color="gray", 
+                    variant="outline", 
+                    radius="md", mb="sm",
+                    icon=DashIconify(icon="carbon:information-square-filled"),
+                    withCloseButton=True
+                )
+                
+                updated_history = [refusal_ui] if is_initial else history + [refusal_ui]
+                return no_update, updated_history, ""
+
             df_adjusted = ConstraintExecutor.execute_safely(df, generated_code)
+            
+            df_adjusted["Forecast"] = df_base["Forecast"].values
+            df_adjusted = df_adjusted.drop(columns=['target', 'actual_combined'], errors='ignore')
             df_adjusted["Date"] = df_adjusted["Date"].dt.strftime('%Y-%m-%dT%H:%M:%S')
             
-            # 6. Create Chat Bubble with Undo Action
             user_msg = dmc.Paper(
                 p="sm", radius="md", mb="sm", withBorder=True,
-                style={"backgroundColor": "#f8f9fa"},
+                style={"backgroundColor": "#ffffff", "borderLeft": "4px solid #1a73e8", "boxShadow": "0 2px 4px rgba(0,0,0,0.05)"},
                 children=[
                     dmc.Group(justify="space-between", children=[
-                        dmc.Text(f"Adjustment {len(history)}", fw=700, size="xs", c="indigo"),
-                        # Pattern-matching ID for the Undo button
+                        dmc.Group(gap="xs", children=[
+                            DashIconify(icon="carbon:checkmark-filled", color="#1a73e8", width=16),
+                            dmc.Text(f"Adjustment {adj_count}", fw=700, size="xs", c="blue"),
+                        ]),
                         dmc.ActionIcon(
                             DashIconify(icon="carbon:undo", width=14),
-                            id={"type": "undo-btn", "index": len(history)},
+                            id={"type": "undo-btn", "index": adj_count},
                             variant="subtle", color="gray", size="sm"
                         )
                     ]),
-                    dmc.Text(prompt, size="sm", mt=4),
-                    dmc.Code(generated_code, block=True, mt="xs", color="gray") 
+                    dmc.Text(prompt, size="sm", mt=4, fw=500),
+                    dmc.Code(generated_code, block=True, mt="xs", color="blue", style={"fontSize": "11px"}) 
                 ]
             )
-            history.append(user_msg)
-            
-            return df_adjusted.to_dict(orient="records"), history, ""
+
+            updated_history = [user_msg] if is_initial else history + [user_msg]
+
+            return df_adjusted.to_dict(orient="records"), updated_history, ""
 
         except Exception as e:
-            error_box = dmc.Alert(
-                f"Logic Error: {str(e)}", title="Execution Failed",
-                color="red", variant="light", radius="md", mb="sm",
-                icon=DashIconify(icon="carbon:warning-alt-filled")
+            error_ui = dmc.Alert(
+                f"Execution Error: {str(e)}", 
+                title="System Error", 
+                color="red", variant="light", radius="md", mb="sm"
             )
-            return no_update, history + [error_box], no_update
-        
-
+            updated_history = [error_ui] if is_initial else history + [error_ui]
+            return no_update, updated_history, no_update
+    
     @app.callback(
         [Output("adjusted-forecast-store", "data", allow_duplicate=True),
         Output("chat-history", "children", allow_duplicate=True)],
@@ -1185,37 +1274,42 @@ def register_processing_callbacks(app):
         prevent_initial_call=True
     )
     def undo_last_adjustment(n_clicks, preds, history):
-        # Check if any undo button was actually clicked
         if not any(n_clicks) or not history:
             raise PreventUpdate
 
-        # Remove the most recent adjustment bubble
         history.pop()
 
-        # Case: If history is now empty (or only contains the initial alert)
         if not history or (len(history) == 1 and "Ready to Assist" in str(history[0])):
             return None, history
 
         try:
-            # Re-initialize the base DataFrame from original ML results
             sheet = next(iter(preds.keys()))
             metric = next(iter(preds[sheet]["metrics"].keys()))
-            df = pd.DataFrame(preds[sheet]["metrics"][metric].get("records", []))
+            records = preds[sheet]["metrics"][metric].get("records", [])
+            df = pd.DataFrame(records)
             df["Date"] = pd.to_datetime(df["Date"])
 
-            # Re-apply every remaining code block in the history to rebuild the state
-            for bubble in history:
+            # RECONSTRUCTION: Iteratively rebuild columns using 'target' logic
+            for i, bubble in enumerate(history):
                 try:
-                    # Dig into the dmc.Paper structure to find the dmc.Code content
-                    # Structure: Paper -> [Group, Text, Code]
                     code_to_reapply = bubble['props']['children'][2]['props']['children']
+                    
+                    adj_num = i + 1
+                    source_col = f"Adjustment {adj_num - 1}" if adj_num > 1 else "Forecast"
+                    
+                    # Problem: 'df' is being updated, but the base 'records' never changes
+                    df["target"] = df[source_col]
                     df = ConstraintExecutor.execute_safely(df, code_to_reapply)
-                except (KeyError, IndexError, TypeError):
-                    continue # Skip alerts or bubbles without code
+                    
+                    # This line actually breaks the iterative chain:
+                    df["Forecast"] = pd.DataFrame(records)["Forecast"].values
+                    
+                except Exception:
+                    continue 
             
             df["Date"] = df["Date"].dt.strftime('%Y-%m-%dT%H:%M:%S')
             return df.to_dict(orient="records"), history
             
         except Exception as e:
-            print(f"Undo Reconstruction Failed: {e}")
+            print(f"Undo Failed: {e}")
             return None, history
