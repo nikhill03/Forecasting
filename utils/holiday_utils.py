@@ -25,9 +25,11 @@ def get_region_holidays(dates, regions: list = None):
         extended_years.add(y + 1)
 
     # 4. Strictly Additive
+    # Using .country_holidays is more robust for multi-region support
     if 'US' in regions:
-        combined += holidays.US(years=extended_years)
+        combined.update(holidays.US(years=extended_years))
     if 'IN' in regions:
-        combined += holidays.India(years=extended_years)
+        combined.update(holidays.India(years=extended_years))
         
+    # CRITICAL FIX: Return the 'combined' object, NOT a list of keys
     return pd.to_datetime(list(combined.keys()))
