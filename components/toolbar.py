@@ -4,7 +4,6 @@ from dash_iconify import DashIconify
 
 def create_toolbar():
     
-    # Helper for clean upload buttons
     def clean_upload_btn(label, upload_id, filename_id, icon="carbon:document-add"):
         return dmc.Box( 
             style={"position": "relative", "display": "flex", "alignItems": "center"}, 
@@ -69,18 +68,17 @@ def create_toolbar():
             align="center",
             children=[
                 
-                # --- ALL INPUTS LEFT-ALIGNED TOGETHER ---
                 dmc.Group(
                     gap="md", 
                     align="center",
                     children=[
-                        # Section 1: Data Sources
+                        # Data Sources
                         clean_upload_btn("Upload Target (Y)", "upload-target", "filename-target", "carbon:chart-line-data"),
                         clean_upload_btn("Upload Variables (X)", "upload-features", "filename-features", "carbon:data-1"),
 
                         dmc.Divider(orientation="vertical", h=32, color="#dee2e6", mx="sm"),
 
-                        # Section 2: Configuration
+                        # Configuration
                         dmc.Select(
                             id="select-sheet-target",
                             placeholder="Worksheet",
@@ -112,44 +110,29 @@ def create_toolbar():
                         ),
                         dmc.MultiSelect(
                             id="region-select",
-                            className="dmc-docs-demo", # Applied directly to component
+                            className="dmc-docs-demo", 
                             placeholder="Select Region(s)",
                             data=[
-                                {"label": "United States (US)", "value": "US"},
-                                {"label": "India (IN)", "value": "IN"}
+                                {"label": "USA", "value": "US"},
+                                {"label": "India", "value": "IN"}
                             ],
                             value=[], 
                             searchable=True,
-                            clearable=True,
                             hidePickedOptions=True,
                             radius="md",
                             variant="filled",
                             leftSection=DashIconify(icon="carbon:location", width=14, color="var(--primary-blue)"),
                             style={
-                                "minWidth": "200px",
-                                "maxWidth": "450px",
+                                "minWidth": "80px",
+                                "maxWidth": "300px",
                                 "width": "fit-content",
                                 "flex": "0 1 auto",
                             },
-                            styles={
-                                "input": {
-                                    "height": "42px", 
-                                    "minHeight": "42px",
-                                    "backgroundColor": "#f1f3f5", 
-                                    "border": "none",
-                                    "display": "flex",
-                                    "alignItems": "center"
-                                },
-                                "values": {
-                                    "flexWrap": "nowrap",
-                                    "gap": "8px",
-                                }
-                            }
                         ),
                     ]
                 ),
 
-                # --- ACTION GROUP RIGHT-ALIGNED ---
+                # Run Forecast Button
                 dmc.Button(
                     "Run Forecast",
                     id="run-models-btn",
