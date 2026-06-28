@@ -4,11 +4,11 @@
     --primary-indigo: #6a11cb;
     --primary-gradient: linear-gradient(135deg, var(--primary-blue) 0%, var(--primary-indigo) 100%);
     --surface-bg: #f8f9fa;
-    --track-bg: #f1f3f5; /* Light gray for the Segmented Track */
+    --track-bg: #f1f3f5;
     --card-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
 }
 
-/* --- COMMON TAB LOGIC --- */
+/* Common Tab Logic */
 .mantine-Tabs-tab {
     transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     background-color: transparent !important;
@@ -17,7 +17,7 @@
     border: none !important;
 }
 
-/* --- 1. HORIZONTAL SEGMENTED CONTROL (PARENT TABS) --- */
+/* Parent Tabs (horizontal) */
 
 /* The Outer Track */
 .mantine-Tabs-tabsList[data-orientation="horizontal"] {
@@ -42,7 +42,7 @@
     color: var(--primary-blue);
 }
 
-/* The Floating White Active Tab */
+/* Floating White Active Tab */
 .mantine-Tabs-tab[data-orientation="horizontal"][data-active] {
     background-color: white !important;
     color: var(--primary-blue) !important;
@@ -51,7 +51,7 @@
 }
 
 
-/* --- 2. VERTICAL SEGMENTED CONTROL (SIDEBAR TABS) --- */
+/*  Sidebar tabs (vertical)  */
 
 /* The Vertical Track */
 .mantine-Tabs-tabsList[data-orientation="vertical"] {
@@ -86,7 +86,7 @@
 }
 
 
-/* --- TABLE UI UPGRADE --- */
+/*  Table UI */
 .mantine-Table-thead {
     background: var(--primary-gradient) !important;
 }
@@ -103,7 +103,7 @@
 }
 
 
-/* --- UTILITIES --- */
+/*  Utilities  */
 .gradient-text {
     background: linear-gradient(90deg, var(--primary-blue), var(--primary-indigo));
     background-clip: text; 
@@ -131,11 +131,198 @@
     color: transparent !important;
 }
 
-/* Stable Tag Styling for the 'Gallery' look */
+/* GAllery styling */
 .dmc-docs-demo .mantine-MultiSelect-value {
     background-color: white !important;
     border: 1px solid #dee2e6 !important;
     font-weight: 600 !important;
     border-radius: 6px !important;
     margin: 0 !important;
+}
+
+.flush-tabs-list {
+    margin-left: -16px !important; 
+    background-color: var(--track-bg) !important;
+    padding: 4px !important;
+    border-radius: 12px !important;
+    display: inline-flex !important;
+    gap: 4px !important;
+    margin-bottom: 15px;
+}
+
+.flush-tabs-root {
+    background-color: var(--track-bg);
+    margin-left: -16px;  
+    margin-right: -16px; 
+    padding-left: 16px;  
+    margin-bottom: 20px;
+    border-bottom: 1px solid #dee2e6;
+}
+
+/*  Inner content expansion  */
+.expanded-console-stack {
+    padding-top: 5px !important;
+    padding-bottom: 20px !important;
+    padding-left: 0px !important;  
+    padding-right: 0px !important; 
+    width: 100% !important;
+}
+
+/* Console grid */
+.full-width-grid {
+    margin: 0 !important;
+    width: 100% !important;
+}
+
+.terminal-window {
+    height: calc(75vh - 100px); 
+    width: 100%;
+    background-color: #111214;
+    color: #e6eef8;
+    font-family: 'Monaco', 'Menlo', 'Consolas', monospace;
+    font-size: 14px;
+    overflow-y: auto;
+    white-space: pre-wrap;
+    border: 1px solid #2d2e32;
+    margin-top: 8px;
+}
+
+/* Left column (Console) to flush-left */
+.console-flush-layout {
+    padding-left: 0 !important;
+    padding-right: 0 !important;
+}
+
+
+/* Alignment for the Status Line */
+.status-controls-group {
+    min-height: 40px;
+    display: flex !important;
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+}
+
+.status-progress-bar {
+    flex: 0 1 250px !important;
+    min-width: 100px;
+    height: 8px !important;
+    transition: width 0.5s ease;
+}
+
+@media (max-width: 768px) {
+    .config-flush-layout {
+        padding-left: 0 !important; /* Stacked columns on mobile need 0 left padding too */
+        margin-top: 20px;
+    }
+}
+
+/*  FORECAST TAB UPGRADES  */
+
+/* Pushes the forecast elements to the screen edges */
+.forecast-grid-expanded {
+    margin: 0 !important;
+    width: 100% !important;
+    display: flex !important; /* Force flex behavior */
+    flex-wrap: wrap !important;
+}
+
+/* Specific centering for the chatbot input area */
+.chat-input-area {
+    background-color: #f1f3f5 !important;
+    border: none !important;
+    transition: all 0.2s ease;
+}
+
+.chat-input-area:focus {
+    background-color: #ffffff !important;
+    border: 1px solid var(--primary-blue) !important;
+}
+
+/* Ensure the elevated cards in this tab also respect the flush edges */
+.forecast-col-left, .forecast-col-right {
+    flex-grow: 1 !important;
+    flex-basis: 0 !important; /* Allows them to collapse/expand properly */
+    min-width: 0 !important;   /* Prevents content from pushing the width out */
+}
+
+@media (min-width: 992px) {
+    .forecast-col-left {
+        flex: 0 0 66.666% !important; /* Strict 8-span width */
+        max-width: 66.666% !important;
+        padding-left: 0 !important;
+    }
+    .forecast-col-right {
+        flex: 0 0 33.333% !important; /* Strict 4-span width */
+        max-width: 33.333% !important;
+        padding-right: 0 !important;
+    }
+}
+
+/*  KYD TAB UPGRADES  */
+.kyd-main-stack {
+    padding: 0 !important;
+    width: 100% !important;
+}
+
+.kyd-flush-panel {
+    padding: 0 !important;
+}
+
+/* Sidebar anchored left */
+.kyd-sidebar-list {
+    width: 220px !important;
+    border-right: 2px solid #f1f3f5 !important;
+    padding-right: 10px !important;
+    padding-left: 0 !important;
+    margin-left: -10px !important;
+}
+
+/* THE FIX: Content Box takes up all remaining space */
+.kyd-content-box {
+    padding-left: 20px !important;
+    flex: 1 !important;           /* Expands to fill the right side */
+    display: flex !important;     /* Allows internal children to grow */
+    flex-direction: column;
+    min-width: 0 !important;
+    width: 100% !important;
+}
+
+/* Force internal Grids and Papers to use 100% of the expanded Box */
+.kyd-content-box .mantine-Grid-root, 
+.kyd-content-box .mantine-Paper-root {
+    width: 100% !important;
+}
+
+@media (max-width: 992px) {
+    .kyd-sidebar-list {
+        width: 100% !important;
+        margin-left: 0 !important;
+        border-right: none !important;
+        border-bottom: 2px solid #f1f3f5;
+        flex-direction: row !important;
+        overflow-x: auto;
+    }
+}
+
+/*  ARTIFACTS TAB UPGRADES  */
+
+.artifacts-main-stack {
+    padding: 0 !important;
+    width: 100% !important;
+}
+
+/* Ensure the artifacts sub-tabs are centered and clean */
+.artifacts-tab-list {
+    background-color: var(--track-bg) !important;
+    padding: 4px !important;
+    border-radius: 12px !important;
+    display: inline-flex !important;
+    gap: 4px !important;
+    margin-bottom: 15px;
+    border: none !important;
+}
+
+.artifacts-content-wrapper {
+    width: 100% !important;
+    padding: 0 !important;
 }
