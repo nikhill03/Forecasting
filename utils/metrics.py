@@ -15,10 +15,10 @@ def forecast_accuracy(y_true: pd.Series, y_pred: pd.Series) -> float:
 
     if total_abs_true == 0:
         if total_abs_error == 0:
-            return 100.0  
+            return 100.0
         else:
-            return 0.0   
-        
+            return 0.0
+
     acc = 1.0 - (total_abs_error / total_abs_true)
     return round(acc * 100, 2)
 
@@ -54,7 +54,6 @@ def mape(y_true, y_pred) -> float:
     mask = ~y_true.isna() & (y_true != 0)
     if mask.sum() == 0: return 0.0
     
-    # Standard MAPE
     return float((y_true[mask] - y_pred[mask]).abs().div(y_true[mask].abs()).mean())
 
 def calculate_adi(series: pd.Series) -> float:
@@ -64,7 +63,6 @@ def calculate_adi(series: pd.Series) -> float:
     non_zero_periods = (y > 0).sum()
     
     if non_zero_periods == 0:
-        # If no demand, ADI is the full length (infinite interval essentially)
         return float(total_periods)
         
     return round(float(total_periods / non_zero_periods), 2)
@@ -74,7 +72,6 @@ def calculate_cv2(series: pd.Series) -> float:
     y = series.fillna(0)
     non_zero_values = y[y > 0]
     
-    # Need at least 2 points to calculate StdDev
     if len(non_zero_values) < 2:
         return 0.0
         
@@ -149,4 +146,3 @@ def calculate_performance_metrics(y_true, y_pred) -> dict:
         "mape": mape(y_true, y_pred),
         "accuracy": forecast_accuracy(y_true, y_pred)
     }
-

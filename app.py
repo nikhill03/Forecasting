@@ -6,6 +6,10 @@ import multiprocessing
 import dash
 import dash_mantine_components as dmc
 
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
 from layout.main_layout import create_layout
 
 # Configure logging
@@ -54,6 +58,8 @@ def main():
 
     register_processing_callbacks(app)
     logger.info("Processing callbacks registered.")
+
+    print(f"HF Token loaded: {'Yes' if os.getenv('HF_TOKEN') else 'No'}")
 
     app.run(debug=True, port=8080, use_reloader=False)
 

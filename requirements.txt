@@ -1,0 +1,13 @@
+pandas
+numpy
+dash
+dash-mantine-components
+dash-iconify
+plotly
+scikit-learn
+lightgbm
+statsmodels
+prophet
+tbats
+openpyxl
+xlsxwriter

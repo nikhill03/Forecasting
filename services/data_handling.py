@@ -9,7 +9,7 @@ class DataHandling:
         self.allow_negative = allow_negative
         self.lookback_days = lookback_days
 
-        # Holiday calendars (Optional, not strictly needed unless business rules use them)
+        # Holiday calendars 
         self.us_holidays = holidays.US()
         self.india_holidays = holidays.India()
 
@@ -20,7 +20,6 @@ class DataHandling:
         """
         logs = []
 
-        # Column checks
         if date_col not in df.columns:
             logs.append(f"ERROR: Date column '{date_col}' missing")
             return None, logs
@@ -29,13 +28,9 @@ class DataHandling:
             logs.append(f"ERROR: Metric '{metric_col}' missing")
             return None, logs
 
-        # Parse & clean
         out = df[[date_col, metric_col]].copy()
         out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
         out[metric_col] = pd.to_numeric(out[metric_col], errors="coerce")
-        
-        # Drop rows where the DATE is missing (we can't forecast without a date)
-        # Note: We do NOT drop rows where the METRIC is missing, we impute those later!
         out = out.dropna(subset=[date_col])
 
         # Deduplicate & sort
@@ -45,7 +40,6 @@ class DataHandling:
 
         series = out[metric_col]
 
-        # Minimum data check (non-null only)
         if series.notna().sum() < self.min_points:
             logs.append(
                 f"SKIP: Only {series.notna().sum()} non-null points "
@@ -60,12 +54,12 @@ class DataHandling:
         
         s = series.copy()
         
-        # 1. Enforce Daily Index (Missing timestamp in between)
+        # Enforcing Daily Index 
         if config.get("enforce_daily_index", True):
             full_idx = pd.date_range(start=s.index.min(), end=s.index.max(), freq="D")
             s = s.reindex(full_idx)
 
-        # Helper: Last Quarter Median (Dynamic Window for First Quarter)
+        # Last Quarter Median
         def get_quarter_median(ts, s_ref):
             start = ts - pd.Timedelta(days=90)
             end = ts - pd.Timedelta(days=1)
@@ -86,7 +80,7 @@ class DataHandling:
             except Exception:
                 return s_ref.median()
 
-        # Helper: Last Year Median (Cascading Fallback to Quarter)
+        # Last Year Median (Fallback to Quarter)
         def get_yearly_median(ts, s_ref):
             start = ts - pd.Timedelta(days=372)
             end = ts - pd.Timedelta(days=358)
@@ -100,7 +94,7 @@ class DataHandling:
             except Exception:
                 return get_quarter_median(ts, s_ref)
 
-        # 2. Weekday/Weekend Missing Value Imputation
+        # Weekday/Weekend Missing Value Imputation
         missing_idx = s[s.isna()].index
         
         if config.get("weekday_treatment") == "ffill":
@@ -125,7 +119,7 @@ class DataHandling:
             if pd.isna(val): val = 0.0
             s.loc[ts] = val
 
-        # 3. Outlier Treatment
+        # Outlier Treatment
         if config.get("outlier_treatment") == "clip":
             q1 = s.quantile(0.25)
             q3 = s.quantile(0.75)
@@ -146,7 +140,6 @@ class DataHandling:
         return self._apply_treatment(series, config)
     
     def apply_business_rules(self, series: pd.Series) -> pd.Series:
-        # Currently a pass-through. You can re-enable holiday zeroing here if needed.
         return series
     
     def check_health(self, df: pd.DataFrame, cols: list) -> Dict[str, Any]:

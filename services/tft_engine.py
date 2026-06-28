@@ -14,9 +14,6 @@ from utils.metrics import wmape
 
 
 class TFTForecaster:
-    """
-    TFT wrapper aligned with MultivariateEngine contract
-    """
 
     def __init__(self):
         self.max_encoder_length = 60
@@ -97,7 +94,7 @@ class TFTForecaster:
         score = wmape(y_test, preds)
         accuracy = round((1 - score) * 100, 2)
 
-        # ---- REFIT ON FULL DATA ----
+        # refitting on full data
         full_ds = TimeSeriesDataSet(
             df,
             time_idx="time_idx",
@@ -132,4 +129,3 @@ class TFTForecaster:
             "model": tft,
             "top_features": ["sequence"],
         }
-

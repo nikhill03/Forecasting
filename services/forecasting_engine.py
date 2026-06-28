@@ -43,7 +43,7 @@ class ForecastingEngine:
         freq = pd.infer_freq(index)
         if freq:
             return freq
-        # fallback using median delta
+        # fallback using median 
         deltas = index.to_series().diff().dropna()
         median_days = deltas.median().days
         if median_days >= 28:
@@ -66,7 +66,6 @@ class ForecastingEngine:
         Simple Moving Average Runner.
         Calculates baseline (mean of last 14 days), returns ModelResult.
         """
-        # Logic: Mean of last 14 days
         window = 14
         if len(train) >= window:
             val = float(train.tail(window).mean())
@@ -76,7 +75,7 @@ class ForecastingEngine:
         if pd.isna(val): 
             val = 0.0
 
-        # A. Calculate Test Predictions (if test set provided)
+        # Test Predictions
         preds_test = pd.Series(dtype=float)
         w = None
         
@@ -84,7 +83,7 @@ class ForecastingEngine:
             preds_test = pd.Series([val] * len(test), index=test.index)
             w = wmape(test, preds_test)
 
-        # B. Calculate Future Forecast
+        # Future Forecast
         future_steps = self.horizon
         future_idx = self._future_index(train.index.max(), future_steps, train.index)
         future_pred = pd.Series([val] * len(future_idx), index=future_idx)
@@ -120,7 +119,6 @@ class ForecastingEngine:
             
         except Exception as e:
             logger.error(f"Croston forecast failed: {e}")
-            # FIX: Call _run_sma and extract the forecast series
             res = self._run_sma(series, None)
             return res.forecast
 
@@ -128,10 +126,8 @@ class ForecastingEngine:
         """
         Fallback Model defaults strictly to SMA.
         """
-        # FIX: Call _run_sma and extract just the forecast series
         res = self._run_sma(train_series, None)
         
-        # If a specific horizon was requested, clip the result (helper logic)
         forecast = res.forecast
         if horizon is not None:
             return forecast.head(horizon)
@@ -143,18 +139,13 @@ class ForecastingEngine:
         return pd.date_range(start=start + offset, periods=steps, freq=offset)
     
     def _run_croston(self, train, test):
-        # 1. Test Prediction
         preds_test = self._croston_forecast(train, len(test))
-        # Align index exactly to test for WMAPE calculation
         preds_test.index = test.index
         
         w = wmape(test, preds_test)
-
-        # 2. Future Forecast
         future_steps = self.horizon
         future_pred = self._croston_forecast(train, future_steps)
         
-        # Croston doesn't have a fitted object state, so we pass None
         return ModelResult("Croston", w, None, future_pred, preds_test)
 
 
@@ -189,15 +180,9 @@ class ForecastingEngine:
             raise ValueError(f"Unknown model {model_name}")
 
         runner = self.models[model_name]
-
-        # Dummy test series ONLY for index passing
         dummy_test = pd.Series(index=test_index, dtype=float)
-
         res = runner(train_series, dummy_test)
-
         preds = res.predictions_test
-
-        # Safety: align exactly to external test index
         preds = preds.reindex(test_index)
 
         return preds.clip(lower=0.0)
@@ -209,7 +194,6 @@ class ForecastingEngine:
         temp_df = temp_df.join(history_series.rename("y"), how="left")
         temp_df.loc[target_idx, "y"] = np.nan
 
-        # 1. LAGS: Added 2,3 (Momentum) and 21,28 (Monthly patterns)
         lags = [1, 2, 3, 7, 14, 21, 28]
         for lag in lags:
             temp_df[f"lag_{lag}"] = temp_df["y"].shift(lag)
@@ -224,9 +208,9 @@ class ForecastingEngine:
         temp_df["is_month_start"] = temp_df.index.is_month_start.astype(int)
 
         res = temp_df.loc[target_idx].drop(columns=["y"])
-        return res.fillna(value=0).ffill().fillna(0)
+        return res.fillna(method="ffill").fillna(0)
 
-    # MODEL RUNNERS (AGGRESSIVE TUNING)
+    # Model Runners
     def _run_tbats(self, train, test):
         full_series = train
         estimator = TBATS(use_arma_errors=False, n_jobs=1, seasonal_periods=[7], show_warnings=False)

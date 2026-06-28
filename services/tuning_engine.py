@@ -64,9 +64,6 @@ class TuningEngine:
         return {}
 
     def optimize(self, model_name, estimator, X, y, default_params=None):
-        """
-        Runs RandomizedSearchCV with TimeSeriesSplit.
-        """
         min_samples = self.cv_splits + 2
         if len(X) < min_samples:
             return default_params if default_params else {}

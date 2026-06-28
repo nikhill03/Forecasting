@@ -53,13 +53,12 @@ if not logger.handlers:
     fh.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     logger.addHandler(fh)
 
-# Helpers
+# Helper function
 def _now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 def _emit_status(total, done, message, completed=False):
     if os.path.exists(STOP_FLAG):
-        # Update progress for status bar
         stop_data = {
             "percent": int((done / total) * 100) if total > 0 else 0,
             "message": "🛑 Execution Stopped by User",
@@ -73,11 +72,9 @@ def _emit_status(total, done, message, completed=False):
             os.replace(temp_path, PROGRESS_JSON)
         except: pass
             
-        # Write termination log to physical file
         _write_debug("🛑 Execution STOPPED: Thread terminating immediately.")
         raise InterruptedError("Stopped by user")
 
-    # 2. Existing percentage logic
     percent = 0
     if total > 0:
         percent = int((done / total) * 100)
@@ -95,13 +92,29 @@ def _emit_status(total, done, message, completed=False):
         data["completed_at"] = datetime.now().isoformat()
         
     try:
-        # 3. Atomic Write
         directory = os.path.dirname(PROGRESS_JSON)
         fd, temp_path = tempfile.mkstemp(dir=directory, text=True)
-        with os.fdopen(fd, 'w') as fh: json.dump(data, fh)
-        os.replace(temp_path, PROGRESS_JSON)
+        with os.fdopen(fd, 'w') as fh: 
+            json.dump(data, fh)
+        
+        success = False
+        for i in range(5):
+            try:
+                os.replace(temp_path, PROGRESS_JSON)
+                success = True
+                break
+            except PermissionError:
+                time.sleep(0.05) 
+        
+        if not success:
+            print(f"[Engine] Final attempt to update status failed due to file lock.")
+            
     except Exception as e:
         print(f"[Engine] Status Write Error: {e}")
+    finally:
+        if os.path.exists(temp_path):
+            try: os.remove(temp_path)
+            except: pass
 
 def _write_debug(msg: str) -> None:
     try:
@@ -591,7 +604,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     if n_points < 90 or (zero_ratio > 0.7 and mean_val < 5):
                         _write_debug(f"Notice: Using Sparse Data Fallback (SMA) due to insufficient history/volume.")
 
-                        # Generate SMA Predictions
+                        # SMA Predictions
                         train_model_output = fe.run_fallback_model(train_series)
                         fallback_val = float(train_model_output.iloc[0]) if not train_model_output.empty else 0.0
                         
@@ -660,7 +673,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                     test_series_raw.index
                                 )
 
-                                # Scoring against non-NaN raw data
+                                # Scoring on non-NaN raw data
                                 common_idx = test_series_raw.index.intersection(test_pred.index)
                                 effective_test = test_series_raw.loc[common_idx].dropna()
                                 effective_test = effective_test[effective_test != 0]
@@ -705,7 +718,6 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                             )
                         else:
                             accuracy = None
-
 
                         # refit best model
                         forecast_series = None
@@ -805,8 +817,8 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                              _write_debug(f"Starting Multivariate Pipeline. Drivers: {len(selected_x_cols)} variables.")
                              print(f"\n[INFO] STARTING MULTIVARIATE PIPELINE for Target: {metric}")
                              print(f"[INFO] Active External Drivers (X): {selected_x_cols}")
+                             _write_debug(f"[INFO] External Variables (X): {selected_x_cols}")
                              
-                             # Check alignment (Debug info)
                              common_idx = train_series.index.intersection(X_train_ext.index)
                              print(f"[INFO] Aligned Training Samples: {len(common_idx)}")
                         
@@ -825,6 +837,26 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                             test_size=test_window
                         )
 
+                        feature_importance_dict = {}
+                        if "best_model_object" in mv_res:
+                            model_obj = mv_res["best_model_object"]
+                            actual_feature_names = mv_res.get("top_features", [])
+                            
+                            try:
+                                if hasattr(model_obj, 'feature_importances_'):
+                                    importances = model_obj.feature_importances_
+                                    feature_importance_dict = dict(zip(actual_feature_names, [float(i) for i in importances]))
+                                elif hasattr(model_obj, 'coef_'):
+                                    # Handle Linear models (Ridge/Huber)
+                                    importances = np.abs(model_obj.coef_).flatten()
+                                    feature_importance_dict = dict(zip(actual_feature_names, [float(i) for i in importances]))
+                                    
+                                # Filter for top 10 impactful drivers
+                                feature_importance_dict = {k: round(v, 4) for k, v in sorted(feature_importance_dict.items(), 
+                                                        key=lambda item: item[1], reverse=True)[:10] if v > 0}
+                            except Exception as e:
+                                _write_debug(f"Feature Importance Error: {str(e)}")
+
                         _write_debug(
                             f"Multivariate Best: {mv_res.get('best_model')} | WMAPE={mv_res.get('wmape'):.2%}"
                         )
@@ -832,7 +864,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         uni_score = external_wmape if external_wmape is not None else 1.0
                         mv_score = mv_res["wmape"] if mv_res["wmape"] is not None else 1.0
 
-                        # _write_debug(f"{sheet}/{metric}: WMAPE comparison | univariate={uni_score:.4f}, multivariate={mv_score:.4f}")
+                        _write_debug(f"{sheet}/{metric}: WMAPE comparison | univariate={uni_score:.4f}, multivariate={mv_score:.4f}")
 
                         is_better = mv_score < uni_score
                         
@@ -882,7 +914,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
                             metric_finalized = True 
 
-                            # Save to Sheet Metrics
+                            # Saving Sheet Metrics
                             sheet_metrics[metric] = {
                                 "best_model": best_name,
                                 "wmape": scores["wmape"],
@@ -896,6 +928,12 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                 "x_vars": selected_x_cols, 
                                 "y_treatment": y_config if 'y_config' in locals() else {},
                                 "x_treatment": x_configs if 'x_configs' in locals() else {},
+                                "feature_importance": feature_importance_dict if 'feature_importance_dict' in locals() else {},
+                                "forecast_bias": float((test_series_raw.sum() - test_pred_series.sum()) / (test_series_raw.sum() + 1e-6)),
+                                "seasonality_summary": {
+                                    "is_periodic": bool(adi_val < 1.32),
+                                    "complexity": "High" if cv2_val > 0.49 else "Stable"
+                                },
                             }
                             
                             metric_completed = True
@@ -981,7 +1019,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         if baseline_wmape < current_best_wmape:
                             _write_debug(f"Notice: Baseline Model (SMA) outperformed advanced models. Reverting.")
                             
-                            # Refit on COMPLETE Data (Train + Test) 
+                            # Refitting on complete Data (Train + Test) 
                             final_base_res = fe._run_sma(full_clean_series, None)                            
                             base_scores = calculate_performance_metrics(test_series_raw, baseline_test_pred)
 

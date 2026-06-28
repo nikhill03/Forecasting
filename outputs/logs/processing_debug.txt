@@ -1,0 +1,20 @@
+[2026-03-05 21:55:54] Pipeline execution started.
+[2026-03-05 21:55:54]  Processing Sheet: Sheet1 
+[2026-03-05 21:55:54] Identified Date Column: 'Date'
+[2026-03-05 21:55:55] Analysis started for Target: Daily_Sales
+[2026-03-05 21:55:55] Data Profile: none outliers, yearly_seasonal_median imputation.
+[2026-03-05 21:55:55] Forecasting Horizon strictly set to: 55 days.
+[2026-03-05 21:55:55] Engine initialized: Horizon=55, Test Window=30
+[2026-03-05 21:55:56] Using Features from main file: 4 variables found.
+[2026-03-05 21:55:56] Demand Pattern: Smooth Demand (ADI=1.00, CV2=0.17)
+[2026-03-05 21:55:56] Baseline (SMA) Model Performance: WMAPE=19.29%
+[2026-03-05 21:55:56] Allowed Models: ['TBATS', 'Prophet', 'LightGBM', 'HistGB', 'ExpSmoothing', 'SARIMAX']
+[2026-03-05 21:55:56] Evaluating Univariate Models
+[2026-03-05 21:56:17] Final forecast series length: 55
+[2026-03-05 21:56:17] Univariate Winner: ExpSmoothing (WMAPE=7.31%)
+[2026-03-05 21:56:17] Note: Accuracy 92.7% < 100%. Attempting Multivariate improvement...
+[2026-03-05 21:56:17] Starting Multivariate Pipeline. Drivers: 4 variables.
+[2026-03-05 22:02:55] Multivariate Best: Huber | WMAPE=4.88%
+[2026-03-05 22:02:55] SUCCESS: Multivariate Model Accepted (Huber).
+[2026-03-05 22:02:55] SUCCESS: Completed forecasting for Sheet1/Daily_Sales
+[2026-03-05 22:02:57] SUCCESS: Execution completed successfully.
