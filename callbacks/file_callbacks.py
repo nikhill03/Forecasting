@@ -1,7 +1,7 @@
 from dash import Input, Output, State, callback_context, no_update, html
 import dash_mantine_components as dmc
 from dash_iconify import DashIconify
-import pandas as pd # <--- Added Import
+import pandas as pd
 
 UPLOAD_TMP_META = "/tmp/dmc_last_selection.json"
 
@@ -66,20 +66,18 @@ def register_callbacks(app):
             return ""
         return "Select metric columns for modeling"
 
-    # --- NEW: Populate X-Variable Dropdown ---
     @app.callback(
         Output("x-variable-select", "data"),
         Output("x-variable-select", "disabled"),
         Input("article-sheet-select", "value"),
         Input("metric-select", "value"),
-        State("uploaded-dfs", "data"), # Requires dcc.Store from layout
+        State("uploaded-dfs", "data"), 
         prevent_initial_call=False
     )
     def populate_x_vars(sheets, target_metrics, uploaded_dfs):
         if not sheets or not uploaded_dfs:
             return [], True
         
-        # Take the first sheet for simplicity in this workflow
         sheet = sheets[0] if isinstance(sheets, list) else sheets
         if sheet not in uploaded_dfs:
             return [], True
@@ -87,24 +85,19 @@ def register_callbacks(app):
         try:
             df = pd.read_json(uploaded_dfs[sheet], orient="split")
             
-            # Determine columns to exclude (Target Metrics)
             exclude_cols = []
             if target_metrics:
                 targets = target_metrics if isinstance(target_metrics, list) else [target_metrics]
                 for t in targets:
-                    # Handle "Sheet||Column" format if present
                     col = t.split("||")[-1] if "||" in t else t
                     exclude_cols.append(col)
             
             options = []
             for col in df.columns:
-                # 1. Skip Target columns
                 if col in exclude_cols: 
                     continue
-                # 2. Skip Date columns
                 if "date" in str(col).lower(): 
                     continue
-                # 3. Only Numeric columns
                 if pd.api.types.is_numeric_dtype(df[col]):
                     options.append({"label": col, "value": col})
             
