@@ -19,7 +19,12 @@ import plotly.graph_objects as go
 from utils.forecasting import parse_uploaded_data
 from services.forecasting_engine import ForecastingEngine
 from services.data_handling import DataHandling
-from utils.metrics import wmape, forecast_accuracy, mae, mape, calculate_adi, calculate_cv2, classify_demand, calculate_performance_metrics
+from utils.metrics import (
+    wmape, forecast_accuracy, mae, mape, rmse,
+    calculate_adi, calculate_cv2, classify_demand,
+    calculate_performance_metrics, composite_score,
+    DemandProfile,
+)
 from services.multivariate_engine import MultivariateEngine
 from services.treatment_analyzer import TreatmentAnalyzer
 from utils.holiday_utils import get_region_holidays
@@ -195,25 +200,22 @@ def clear_all_outputs() -> None:
         except Exception:
             pass
 
-def log_experiment(sheet: str, metric: str, stage: str, model_name: str, 
-                  wmape_val: float, mae_val: float, mape_val: float, accuracy_val: float):
-    """
-    Appends model performance (ALL metrics) to CSV.
-    """
+def log_experiment(sheet, metric, stage, model_name,
+                   wmape_val, mae_val, mape_val, accuracy_val,
+                   rmse_val=None):   # NEW: rmse_val param
     try:
         if not os.path.exists(HISTORY_LOG):
             with open(HISTORY_LOG, "w") as f:
-                f.write("Timestamp,Sheet,Metric,Stage,Model,WMAPE,MAE,MAPE,Accuracy\n")
-        
+                f.write("Timestamp,Sheet,Metric,Stage,Model,WMAPE,MAE,MAPE,RMSE,Accuracy\\n")  # NEW: RMSE column
+ 
         with open(HISTORY_LOG, "a") as f:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
-            w = f"{wmape_val:.5f}" if wmape_val is not None else ""
-            m = f"{mae_val:.5f}" if mae_val is not None else ""
-            mp = f"{mape_val:.5f}" if mape_val is not None else ""
+            w   = f"{wmape_val:.5f}"  if wmape_val   is not None else ""
+            m   = f"{mae_val:.5f}"    if mae_val     is not None else ""
+            mp  = f"{mape_val:.5f}"   if mape_val    is not None else ""
+            r   = f"{rmse_val:.5f}"   if rmse_val    is not None else ""  # NEW
             acc = f"{accuracy_val:.2f}" if accuracy_val is not None else ""
-            
-            f.write(f"{timestamp},{sheet},{metric},{stage},{model_name},{w},{m},{mp},{acc}\n")
+            f.write(f"{timestamp},{sheet},{metric},{stage},{model_name},{w},{m},{mp},{r},{acc}\\n")
     except Exception as e:
         print(f"Log Error: {e}")
 
@@ -484,15 +486,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
                     if selected_x_cols and 'df_x_clean' in locals():
                         X_train_ext = df_x_clean.reindex(train_series.index)
-                        X_train_ext = X_train_ext.fillna(method='ffill').fillna(0)
+                        X_train_ext = X_train_ext.ffill().fillna(0)
                         
                         X_test_ext = df_x_clean.reindex(test_series_clean.index)
-                        X_test_ext = X_test_ext.fillna(method='ffill').fillna(0)
+                        X_test_ext = X_test_ext.ffill().fillna(0)
 
                     adi_val = calculate_adi(full_clean_series)
                     cv2_val = calculate_cv2(full_clean_series)
-                    demand_type = classify_demand(adi_val, cv2_val)
-                    _write_debug(f"Demand Pattern: {demand_type} (ADI={adi_val:.2f}, CV2={cv2_val:.2f})")
+                    demand_profile = classify_demand(adi_val=adi_val, cv2_val=cv2_val)
+                    demand_type    = demand_profile.demand_type
+                    _write_debug(
+                        f"Demand Pattern: {demand_type} "
+                        f"(ADI={adi_val:.2f}, CV2={cv2_val:.2f}) | "
+                        f"Recommended models: {demand_profile.recommended_models}"
+                    )
 
                     if isinstance(train_series.index, pd.DatetimeIndex):
                         if train_series.index.freq is None and train_series.index.inferred_freq is None:
@@ -504,11 +511,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     if train_series is None or train_series.empty:
                         _write_debug(f"Error: Training series is empty after sanitization. Skipping.")
                         sheet_metrics[metric] = {
-                            "best_model": None, 
-                            "wmape": None, 
-                            "records": [],
-                            "y_treatment": y_config if 'y_config' in locals() else {},
-                            "x_treatment": x_configs if 'x_configs' in locals() else {},
+                            "best_model"      : best_name,
+                            "wmape"           : scores["wmape"],
+                            "mae"             : scores["mae"],
+                            "mape"            : scores["mape"],
+                            "rmse"            : scores.get("rmse"),          # NEW
+                            "composite_score" : scores.get("composite_score"),  # NEW
+                            "accuracy"        : scores["accuracy"],
+                            "adi"             : adi_val,
+                            "cv2"             : cv2_val,
+                            "demand_type"     : demand_type,
+                            "demand_profile"  : demand_profile.to_dict(),    # NEW — full profile
+                            "records"         : records,
+                            "y_treatment"     : y_config if 'y_config' in locals() else {},
+                            "x_treatment"     : x_configs if 'x_configs' in locals() else {},
                         }
                         sheet_figs[metric] = {}
                         current_progress += 3
@@ -528,18 +544,18 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     cv = std_val / (mean_val + 1e-6)
 
                     # model allowlist (will be pruned)
-                    allowed_models = {"TBATS", "Prophet", "LightGBM", "HistGB", "ExpSmoothing", "SARIMAX", "Croston"}
+                    # allowed_models = {"TBATS", "Prophet", "LightGBM", "HistGB", "ExpSmoothing", "SARIMAX", "Croston"}
 
-                    # Low volume series
-                    if mean_val < 10:
-                        _write_debug(f"Volume Low (Mean < 10): Disabling Prophet & SARIMAX.")
-                        allowed_models.discard("Prophet")
-                        allowed_models.discard("SARIMAX")
+                    # # Low volume series
+                    # if mean_val < 10:
+                    #     _write_debug(f"Volume Low (Mean < 10): Disabling Prophet & SARIMAX.")
+                    #     allowed_models.discard("Prophet")
+                    #     allowed_models.discard("SARIMAX")
 
-                    # Zero heavy series
-                    if zero_ratio > 0.8:
-                        _write_debug(f"Sparse Data Detected (>80% zeros): Disabling Prophet.")
-                        allowed_models.discard("Prophet")
+                    # # Zero heavy series
+                    # if zero_ratio > 0.8:
+                    #     _write_debug(f"Sparse Data Detected (>80% zeros): Disabling Prophet.")
+                    #     allowed_models.discard("Prophet")
                     
                     baseline_wmape = None
                     baseline_test_pred = None
@@ -567,35 +583,38 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     
                     original_models = fe.models.copy()
 
-                    # gating for forecasting engine
-                    if fe is not None:
-                        models_to_run = {
-                            "TBATS": fe._run_tbats,
-                            "Prophet": fe._run_prophet,
-                            "LightGBM": fe._run_lightgbm,
-                            "HistGB": fe._run_hist_gb,
-                            "ExpSmoothing": fe._run_expsmoothing,
-                            "SARIMAX": fe._run_sarimax,
-                            # "Croston": fe._run_croston,
-                        }
-                        models_to_run = {k: v for k, v in models_to_run.items() if k in allowed_models}
-                        fe.models = models_to_run.copy()
-                        _write_debug(f"Allowed Models: {list(fe.models.keys())}")
+                    demand_filtered_models = fe.get_models_for_demand_type(
+                        demand_profile = demand_profile,
+                        mean_val       = mean_val,
+                        zero_ratio     = zero_ratio,
+                        cv             = cv,
+                        n_points       = n_points,
+                    )
 
-                    # High volatility series
-                    if cv > 1.5 and fe is not None:
-                        fe.models.pop("SARIMAX", None)
-                        _write_debug(f"High Volatility: Disabling SARIMAX.")
+                    if not demand_filtered_models:
+                        _write_debug("Notice: Demand profile indicates sparse fallback will be used.")
+                    else:
+                        fe.models = demand_filtered_models
+                        _write_debug(f"Active Models (demand-routed): {list(fe.models.keys())}")
 
                     if train_series.empty:
                         _write_debug(f"Error: Series is empty. Skipping.")
                         sheet_metrics[metric] = {
-                            "best_model": None, 
-                            "wmape": None, 
-                            "records": [],
-                            "y_treatment": y_config if 'y_config' in locals() else {},
-                            "x_treatment": x_configs if 'x_configs' in locals() else {},
-                            }
+                            "best_model"      : best_name,
+                            "wmape"           : scores["wmape"],
+                            "mae"             : scores["mae"],
+                            "mape"            : scores["mape"],
+                            "rmse"            : scores.get("rmse"),          # NEW
+                            "composite_score" : scores.get("composite_score"),  # NEW
+                            "accuracy"        : scores["accuracy"],
+                            "adi"             : adi_val,
+                            "cv2"             : cv2_val,
+                            "demand_type"     : demand_type,
+                            "demand_profile"  : demand_profile.to_dict(),    # NEW — full profile
+                            "records"         : records,
+                            "y_treatment"     : y_config if 'y_config' in locals() else {},
+                            "x_treatment"     : x_configs if 'x_configs' in locals() else {},
+                        }
                         metric_completed = True
                         sheet_figs[metric] = {}
                         current_progress += 2 
@@ -636,13 +655,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         )
 
                         sheet_metrics[metric] = {
-                            "best_model": "Baseline_SMA",
-                            "wmape": scores["wmape"],
-                            "accuracy": scores["accuracy"],
-                            "adi": adi_val, "cv2": cv2_val, "demand_type": demand_type,
-                            "records": records,
-                            "y_treatment": y_config if 'y_config' in locals() else {},
-                            "x_treatment": x_configs if 'x_configs' in locals() else {},
+                            "best_model"      : best_name,
+                            "wmape"           : scores["wmape"],
+                            "mae"             : scores["mae"],
+                            "mape"            : scores["mape"],
+                            "rmse"            : scores.get("rmse"),          # NEW
+                            "composite_score" : scores.get("composite_score"),  # NEW
+                            "accuracy"        : scores["accuracy"],
+                            "adi"             : adi_val,
+                            "cv2"             : cv2_val,
+                            "demand_type"     : demand_type,
+                            "demand_profile"  : demand_profile.to_dict(),    # NEW — full profile
+                            "records"         : records,
+                            "y_treatment"     : y_config if 'y_config' in locals() else {},
+                            "x_treatment"     : x_configs if 'x_configs' in locals() else {},
                         }
 
                         metric_completed = True
@@ -685,17 +711,23 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                     test_series_raw.loc[common_idx],
                                     test_pred.loc[common_idx]
                                 )
-                                score = scores["wmape"]
-
-                                print(f"   >> {sheet}/{metric} | Model: {model_name:<12} | WMAPE: {score:.4f}")
-                                log_experiment(
-                                    sheet, metric, "Univariate", model_name, 
-                                    scores["wmape"], scores["mae"], scores["mape"], scores["accuracy"]
+                                from utils.metrics import composite_score as _composite_score
+ 
+                                comp_score = _composite_score(
+                                    actual          = test_series_raw.loc[common_idx],
+                                    predicted       = test_pred.loc[common_idx],
+                                    train_series    = train_series,
+                                    forecast_series = test_pred.loc[common_idx],  # proxy until full forecast available
                                 )
-
-                                if score < best_wmape:
-                                    best_wmape = score
-                                    best_name = model_name
+                                
+                                # Log both for transparency
+                                _write_debug(f"{model_name}: WMAPE={scores['wmape']:.4f}  Composite={comp_score:.4f}")
+                                
+                                # Select on composite score (lower is better)
+                                if comp_score < best_composite:
+                                    best_composite = comp_score
+                                    best_wmape     = scores["wmape"]
+                                    best_name      = model_name
                                     best_test_pred = test_pred
 
                             except Exception:
@@ -780,12 +812,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         )
 
                         sheet_metrics[metric] = {
-                            "best_model": "Baseline_SMA",
-                            "wmape": None, "accuracy": None,
-                            "adi": adi_val, "cv2": cv2_val, "demand_type": demand_type,
-                            "records": records,
-                            "y_treatment": y_config if 'y_config' in locals() else {},
-                            "x_treatment": x_configs if 'x_configs' in locals() else {},
+                            "best_model"      : best_name,
+                            "wmape"           : scores["wmape"],
+                            "mae"             : scores["mae"],
+                            "mape"            : scores["mape"],
+                            "rmse"            : scores.get("rmse"),          # NEW
+                            "composite_score" : scores.get("composite_score"),  # NEW
+                            "accuracy"        : scores["accuracy"],
+                            "adi"             : adi_val,
+                            "cv2"             : cv2_val,
+                            "demand_type"     : demand_type,
+                            "demand_profile"  : demand_profile.to_dict(),    # NEW — full profile
+                            "records"         : records,
+                            "y_treatment"     : y_config if 'y_config' in locals() else {},
+                            "x_treatment"     : x_configs if 'x_configs' in locals() else {},
                         }
                         metric_completed = True
                         metric_success = True
@@ -916,24 +956,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
                             # Saving Sheet Metrics
                             sheet_metrics[metric] = {
-                                "best_model": best_name,
-                                "wmape": scores["wmape"],
-                                "mae": scores["mae"],       
-                                "mape": scores["mape"],     
-                                "accuracy": scores["accuracy"],
-                                "adi": adi_val,    
-                                "cv2": cv2_val,
-                                "demand_type": demand_type,
-                                "records": records,
-                                "x_vars": selected_x_cols, 
-                                "y_treatment": y_config if 'y_config' in locals() else {},
-                                "x_treatment": x_configs if 'x_configs' in locals() else {},
-                                "feature_importance": feature_importance_dict if 'feature_importance_dict' in locals() else {},
-                                "forecast_bias": float((test_series_raw.sum() - test_pred_series.sum()) / (test_series_raw.sum() + 1e-6)),
-                                "seasonality_summary": {
-                                    "is_periodic": bool(adi_val < 1.32),
-                                    "complexity": "High" if cv2_val > 0.49 else "Stable"
-                                },
+                                "best_model"      : best_name,
+                                "wmape"           : scores["wmape"],
+                                "mae"             : scores["mae"],
+                                "mape"            : scores["mape"],
+                                "rmse"            : scores.get("rmse"),          # NEW
+                                "composite_score" : scores.get("composite_score"),  # NEW
+                                "accuracy"        : scores["accuracy"],
+                                "adi"             : adi_val,
+                                "cv2"             : cv2_val,
+                                "demand_type"     : demand_type,
+                                "demand_profile"  : demand_profile.to_dict(),    # NEW — full profile
+                                "records"         : records,
+                                "y_treatment"     : y_config if 'y_config' in locals() else {},
+                                "x_treatment"     : x_configs if 'x_configs' in locals() else {},
                             }
                             
                             metric_completed = True
@@ -994,17 +1030,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         )
 
                         sheet_metrics[metric] = {
-                            "best_model": best_name,
-                            "wmape": external_wmape,
-                            "mae": val_mae,      
-                            "mape": val_mape,
-                            "adi": adi_val,    
-                            "cv2": cv2_val,   
-                            "demand_type": demand_type,  
-                            "accuracy": final_accuracy,
-                            "records": records,
-                            "y_treatment": y_config if 'y_config' in locals() else {},
-                            "x_treatment": x_configs if 'x_configs' in locals() else {},
+                            "best_model"      : best_name,
+                            "wmape"           : scores["wmape"],
+                            "mae"             : scores["mae"],
+                            "mape"            : scores["mape"],
+                            "rmse"            : scores.get("rmse"),          # NEW
+                            "composite_score" : scores.get("composite_score"),  # NEW
+                            "accuracy"        : scores["accuracy"],
+                            "adi"             : adi_val,
+                            "cv2"             : cv2_val,
+                            "demand_type"     : demand_type,
+                            "demand_profile"  : demand_profile.to_dict(),    # NEW — full profile
+                            "records"         : records,
+                            "y_treatment"     : y_config if 'y_config' in locals() else {},
+                            "x_treatment"     : x_configs if 'x_configs' in locals() else {},
                         }
                         metric_completed = True
                         metric_success = True
@@ -1034,17 +1073,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
 
                             # Overwriting Winner
                             sheet_metrics[metric] = {
-                                "best_model": "Baseline_SMA",
-                                "wmape": base_scores["wmape"],
-                                "mae": base_scores["mae"],       
-                                "mape": base_scores["mape"],     
-                                "accuracy": base_scores["accuracy"],
-                                "adi": adi_val,    
-                                "cv2": cv2_val,
-                                "demand_type": demand_type,
-                                "records": records,
-                                "y_treatment": y_config if 'y_config' in locals() else {},
-                                "x_treatment": x_configs if 'x_configs' in locals() else {},
+                                "best_model"      : best_name,
+                                "wmape"           : scores["wmape"],
+                                "mae"             : scores["mae"],
+                                "mape"            : scores["mape"],
+                                "rmse"            : scores.get("rmse"),          # NEW
+                                "composite_score" : scores.get("composite_score"),  # NEW
+                                "accuracy"        : scores["accuracy"],
+                                "adi"             : adi_val,
+                                "cv2"             : cv2_val,
+                                "demand_type"     : demand_type,
+                                "demand_profile"  : demand_profile.to_dict(),    # NEW — full profile
+                                "records"         : records,
+                                "y_treatment"     : y_config if 'y_config' in locals() else {},
+                                "x_treatment"     : x_configs if 'x_configs' in locals() else {},
                             }
                             
                             best_name = "Baseline_SMA"
@@ -1070,11 +1112,20 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     with open(TRACEBACK_FILE, "w") as fh:
                         fh.write(traceback.format_exc())
                     sheet_metrics[metric] = {
-                        "best_model": None, 
-                        "wmape": None, 
-                        "records": [],
-                        "y_treatment": y_config if 'y_config' in locals() else {},
-                        "x_treatment": x_configs if 'x_configs' in locals() else {},
+                        "best_model"      : best_name,
+                        "wmape"           : scores["wmape"],
+                        "mae"             : scores["mae"],
+                        "mape"            : scores["mape"],
+                        "rmse"            : scores.get("rmse"),          # NEW
+                        "composite_score" : scores.get("composite_score"),  # NEW
+                        "accuracy"        : scores["accuracy"],
+                        "adi"             : adi_val,
+                        "cv2"             : cv2_val,
+                        "demand_type"     : demand_type,
+                        "demand_profile"  : demand_profile.to_dict(),    # NEW — full profile
+                        "records"         : records,
+                        "y_treatment"     : y_config if 'y_config' in locals() else {},
+                        "x_treatment"     : x_configs if 'x_configs' in locals() else {},
                     }
                     metric_completed = True
                     metric_success = False
