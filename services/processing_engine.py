@@ -206,7 +206,8 @@ def log_experiment(sheet, metric, stage, model_name,
     try:
         if not os.path.exists(HISTORY_LOG):
             with open(HISTORY_LOG, "w") as f:
-                f.write("Timestamp,Sheet,Metric,Stage,Model,WMAPE,MAE,MAPE,RMSE,Accuracy\\n")  # NEW: RMSE column
+                r   = f"{rmse_val:.5f}" if rmse_val is not None else ""
+                f.write(f"{timestamp},{sheet},{metric},{stage},{model_name},{w},{m},{mp},{r},{acc}\n")
  
         with open(HISTORY_LOG, "a") as f:
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
