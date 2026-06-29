@@ -1,0 +1,7 @@
+[200~__pycache__/
+*.pyc
+*.pyo
+outputs/
+debug_outputs/
+*.flag
+*.lock
