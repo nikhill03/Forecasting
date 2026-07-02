@@ -206,16 +206,28 @@ async def get_progress(job_id: str) -> ProgressResponse:
     summary="Get full job status and results",
 )
 async def get_job(job_id: str) -> ForecastJobResponse:
-    """
-    Get complete job information including results once complete.
-    Results are only populated when status == 'success'.
-    """
     job = _job_store.get(job_id)
     if not job:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Job '{job_id}' not found",
-        )
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    # Normalize results from processing_engine format to API schema format
+    if job.get("results"):
+        normalized = {}
+        for sheet_name, sheet_data in job["results"].items():
+            if isinstance(sheet_data, dict) and "metrics" not in sheet_data:
+                # Old format: {sheet_name: {metric_name: {...}}}
+                # New format: {sheet_name: {sheet_name: ..., metrics: {metric_name: {...}}}}
+                normalized[sheet_name] = {
+                    "sheet_name": sheet_name,
+                    "metrics": {
+                        metric_name: {"metric_name": metric_name, **metric_data}
+                        for metric_name, metric_data in sheet_data.items()
+                    }
+                }
+            else:
+                normalized[sheet_name] = sheet_data
+        job = {**job, "results": normalized}
+
     return ForecastJobResponse(**job)
 
 
