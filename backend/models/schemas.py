@@ -136,35 +136,37 @@ class ForecastRecord(BaseModel):
 
 
 class MetricResult(BaseModel):
-    metric_name        : str
-    best_model         : Optional[str]
-    wmape              : Optional[float]
-    mae                : Optional[float]
-    mape               : Optional[float]
-    rmse               : Optional[float]
-    accuracy           : Optional[float]
-    composite_score    : Optional[float]
-    demand_profile     : Optional[DemandProfileSchema]
-    feature_importance : Optional[Dict[str, float]]
-    forecast_bias      : Optional[float]
-    records            : List[ForecastRecord]
+    metric_name: Optional[str] = None
+    best_model: Optional[str] = None
+    wmape: Optional[float] = None
+    mae: Optional[float] = None
+    mape: Optional[float] = None
+    rmse: Optional[float] = None
+    accuracy: Optional[float] = None
+    composite_score: Optional[float] = None
+    demand_profile: Optional[DemandProfileSchema] = None
+    feature_importance: Optional[Dict[str, float]] = None
+    forecast_bias: Optional[float] = None
+    records: List[ForecastRecord] = []
 
 
 class SheetResult(BaseModel):
-    sheet_name : str
-    metrics    : Dict[str, MetricResult]
+    sheet_name: Optional[str] = None
+    metrics: Dict[str, MetricResult] = {}
 
 
 class ForecastJobResponse(BaseModel):
-    job_id      : str
-    status      : str   # pending | running | success | failed | stopped
-    progress    : int   # 0-100
-    message     : str
-    created_at  : datetime
-    started_at  : Optional[datetime]
+    model_config = {"extra": "ignore"}  
+
+    job_id: str
+    status: str
+    progress: int
+    message: str
+    created_at: datetime
+    started_at: Optional[datetime]
     completed_at: Optional[datetime]
-    results     : Optional[Dict[str, SheetResult]] = None
-    error       : Optional[str] = None
+    results: Optional[Dict[str, SheetResult]] = None
+    error: Optional[str] = None
 
 
 class ProgressResponse(BaseModel):
