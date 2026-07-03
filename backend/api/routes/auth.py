@@ -14,112 +14,72 @@ Endpoints:
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel
+from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.database import get_db
 from backend.core.dependencies import get_current_user_id
-from backend.core.security import (
-    create_access_token,
-    create_refresh_token,
-    hash_password,
-    verify_password,
-)
 from backend.models.schemas import (
+    SuccessResponse,
     TokenResponse,
     UserLoginRequest,
     UserRegisterRequest,
     UserResponse,
-    SuccessResponse,
+)
+from backend.services.auth_service import (
+    get_user_by_id,
+    login_user,
+    refresh_tokens,
+    register_user,
 )
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
-@router.post(
-    "/register",
-    status_code=status.HTTP_201_CREATED,
-    summary="Register a new user account",
-)
-async def register(request: UserRegisterRequest):
-    """
-    Phase 2 implementation:
-    - Check email uniqueness in PostgreSQL
-    - Hash password with bcrypt
-    - Insert User row
-    - Return TokenResponse (auto-login on register)
-    """
-    # Phase 1 stub — returns 501 until Phase 2
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Auth not yet implemented. Coming in Phase 2.",
-    )
+class RefreshTokenRequest(BaseModel):
+    refresh_token: str
 
 
-@router.post(
-    "/login",
-    response_model=TokenResponse,
-    summary="Login and receive JWT tokens",
-)
-async def login(request: UserLoginRequest):
-    """
-    Phase 2 implementation:
-    - Look up user by email in PostgreSQL
-    - Verify password with bcrypt
-    - Create access + refresh JWT tokens
-    - Store refresh token hash in Redis for blacklisting
-    """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Auth not yet implemented. Coming in Phase 2.",
-    )
+@router.post("/register", response_model=TokenResponse, status_code=201)
+async def register(
+    request: UserRegisterRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Create a new account. Auto-logs in on success."""
+    return await register_user(request, db)
 
 
-@router.post(
-    "/refresh",
-    response_model=TokenResponse,
-    summary="Refresh access token",
-)
-async def refresh_token(refresh_token: str):
-    """
-    Phase 2 implementation:
-    - Verify refresh token signature and expiry
-    - Check refresh token not blacklisted in Redis
-    - Issue new access + refresh token pair
-    - Blacklist old refresh token
-    """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Auth not yet implemented. Coming in Phase 2.",
-    )
+@router.post("/login", response_model=TokenResponse)
+async def login(
+    request: UserLoginRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Login with email + password. Returns access + refresh tokens."""
+    return await login_user(request, db)
 
 
-@router.post(
-    "/logout",
-    response_model=SuccessResponse,
-    summary="Logout and invalidate tokens",
-)
-async def logout(user_id: str = Depends(get_current_user_id)):
-    """
-    Phase 2 implementation:
-    - Blacklist current refresh token in Redis
-    """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Auth not yet implemented. Coming in Phase 2.",
-    )
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh(
+    request: RefreshTokenRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Exchange refresh token for new token pair."""
+    return await refresh_tokens(request.refresh_token, db)
 
 
-@router.get(
-    "/me",
-    response_model=UserResponse,
-    summary="Get current user profile",
-)
-async def get_me(user_id: str = Depends(get_current_user_id)):
-    """
-    Phase 2 implementation:
-    - Look up user by ID from JWT subject
-    - Return UserResponse
-    """
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Auth not yet implemented. Coming in Phase 2.",
-    )
+@router.post("/logout", response_model=SuccessResponse)
+async def logout(
+    _user_id: str = Depends(get_current_user_id),
+) -> SuccessResponse:
+    """Logout. Phase 3 will blacklist token in Redis."""
+    return SuccessResponse(message="Logged out successfully.")
+
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """Return authenticated user profile."""
+    return await get_user_by_id(user_id, db)
