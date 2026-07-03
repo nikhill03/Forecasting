@@ -4,38 +4,28 @@ backend/core/dependencies.py
 FastAPI dependency injection functions.
 These are injected into route handlers via Depends().
 """
-
 from __future__ import annotations
-
-from typing import AsyncGenerator
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import Settings, get_settings
 from backend.core.security import decode_token
+from backend.core.database import get_db
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
-
-# ── Settings dependency ──────────────────────────────────────────
 
 def get_config(settings: Settings = Depends(get_settings)) -> Settings:
     return settings
 
 
-# ── Auth dependency (Phase 2 will add DB lookup) ─────────────────
-
 async def get_current_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> str:
-    """
-    Extract and validate the JWT bearer token.
-    Returns the user_id (subject) from the token.
-
-    Phase 2: will extend to look up the full User object from DB.
-    """
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -59,12 +49,31 @@ async def get_current_user_id(
         )
 
 
-# ── Optional auth (for endpoints accessible to anonymous users) ───
+async def get_current_user(
+    user_id: str = Depends(get_current_user_id),
+    db: AsyncSession = Depends(get_db),
+):
+    """Returns full User ORM object. Use when you need user attributes."""
+    from backend.models.db_models import User
+
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found",
+        )
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+    return user
+
 
 async def get_optional_user_id(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> str | None:
-    """Returns user_id if token present and valid, else None."""
     if credentials is None:
         return None
     try:
