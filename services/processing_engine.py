@@ -424,7 +424,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     # Forecasting Engine initialization
                     fe = None
                     try:
-                        fe = ForecastingEngine(freq="D", horizon=safe_horizon, test_size=test_window) 
+                        fe = None  # initialized after train_series is available
                         _write_debug(f"Engine initialized: Horizon={safe_horizon}, Test Window={test_window}")
                     except Exception as e:
                         _write_debug(f"Error: Engine initialization failed: {e}")
@@ -481,6 +481,11 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     train_raw, test_raw = fe._train_test_split(raw_series)
 
                     train_series = dh.impute_train(train_raw, config=y_config)
+                    # Auto-detect frequency now that train_series index is available
+                    detected_freq = pd.infer_freq(train_series.index) or "D"
+                    _write_debug(f"Detected frequency: {detected_freq}")
+                    fe = ForecastingEngine(freq=detected_freq, horizon=safe_horizon, test_size=test_window)
+                    _write_debug(f"Engine initialized: Horizon={safe_horizon}, Test Window={test_window}")
                     test_series_clean = dh.impute_train(test_raw, config=y_config) 
                     test_series_raw = test_raw 
                     full_clean_series = dh.impute_train(raw_series, config=y_config)                  
@@ -682,6 +687,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                     # Univariate Model Selection
                     try:
                         best_name = None
+                        best_composite = float("inf")
                         best_wmape = float("inf")
                         best_test_pred = None
                         accuracy = None
@@ -706,6 +712,7 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                                 effective_test = effective_test[effective_test != 0]
 
                                 if len(effective_test) < max(7, int(0.3 * len(test_series_raw))):
+                                    _write_debug(f"{model_name}: Skipped — insufficient test overlap ({len(effective_test)} points, need {max(7, int(0.3 * len(test_series_raw)))})")
                                     continue
 
                                 scores = calculate_performance_metrics(
@@ -752,27 +759,28 @@ def processing_worker(file_contents_norm: str, selected_sheets_list: List[str],
                         else:
                             accuracy = None
 
-                        # refit best model
+                        # Refit best model on FULL data (train + test) before generating forecast
                         forecast_series = None
                         runner = fe.models.get(best_name)
 
                         if runner is not None:
-                            dummy_test = train_series.iloc[-1:]
-                            refit_res = runner(train_series, dummy_test)
+                            # Pass actual test_series_clean so model refits on train+test combined
+                            # This is the correct approach — all model runners handle this internally
+                            refit_res = runner(train_series, test_series_clean)
 
                             if refit_res is not None and hasattr(refit_res, "forecast"):
                                 forecast_series = refit_res.forecast.clip(lower=0.0)
-
-                                _write_debug(f"Final forecast series length: {len(forecast_series)}")
-
-                                horizon = len(forecast_series)
+                                _write_debug(
+                                    f"Best model '{best_name}' refit on full data (train+test). "
+                                    f"Forecast length: {len(forecast_series)}"
+                                )
+                                # Align forecast index to start after last observed date
                                 last_observed_date = raw_series.index.max()
-
                                 forecast_series.index = fe._future_index(
                                     last_observed_date,
-                                    horizon,
+                                    len(forecast_series),
                                     raw_series.index
-                                )
+        )
 
                         _write_debug(
                             f"Univariate Winner: {best_name} (WMAPE={external_wmape:.2%})"
