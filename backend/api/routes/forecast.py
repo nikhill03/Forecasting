@@ -42,7 +42,21 @@ def _normalize_results(results: dict | None) -> dict | None:
         return results
     normalized = {}
     for sheet_name, sheet_data in results.items():
-        if isinstance(sheet_data, dict) and "metrics" not in sheet_data:
+        if isinstance(sheet_data, dict) and "metrics" in sheet_data:
+            # Already has metrics key — just add sheet_name and fix metric_name fields
+            normalized[sheet_name] = {
+                "sheet_name": sheet_name,
+                "metrics": {
+                    metric_name: {
+                        "metric_name": metric_name,
+                        **{k: v for k, v in metric_data.items() if k != "records"},
+                        "records": metric_data.get("records", []),
+                    }
+                    for metric_name, metric_data in sheet_data["metrics"].items()
+                    if isinstance(metric_data, dict)
+                },
+            }
+        elif isinstance(sheet_data, dict):
             normalized[sheet_name] = {
                 "sheet_name": sheet_name,
                 "metrics": {

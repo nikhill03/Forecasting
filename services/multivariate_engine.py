@@ -560,8 +560,11 @@ class MultivariateEngine:
         last_date    = full_series_clean.index.max()
         history_df   = df_full[["y"]].copy()
         future_preds = []
+        # FIX: use detected series frequency instead of hardcoded 'D'
+        _mv_freq = pd.infer_freq(full_series_clean.index) or "D"
+        _offset = pd.tseries.frequencies.to_offset(_mv_freq)
         future_dates = pd.date_range(
-            start=last_date + pd.Timedelta(days=1), periods=horizon, freq="D"
+            start=last_date + _offset, periods=horizon, freq=_mv_freq
         )
 
         X_latest = X_full_ext.iloc[-1:].copy() if X_full_ext is not None else None

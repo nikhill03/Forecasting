@@ -1,7 +1,75 @@
-[200~__pycache__/
-*.pyc
-*.pyo
+# ── Python ────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# ── Virtual environments ───────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+
+# ── Runtime artifacts (TD-002 fix) ────────────────────────────────
+# These were committed in v1.0 — now excluded
 outputs/
 debug_outputs/
 *.flag
 *.lock
+*.log
+
+# ── Environment variables ─────────────────────────────────────────
+.env
+.env.*
+!.env.example          # keep the example template committed
+
+# ── IDE ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# ── Jupyter ───────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Testing ───────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ── Frontend ──────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# ── Docker ────────────────────────────────────────────────────────
+docker/secrets/
+
+# ── AWS / Terraform ───────────────────────────────────────────────
+infra/.terraform/
+infra/*.tfstate
+infra/*.tfstate.backup
+infra/.terraform.lock.hcl
+infra/terraform.tfvars      # contains secrets
+
+# ── Debug files (TD-002 fix) ──────────────────────────────────────
+debug.py
+hugging_Face_Debug.py
+sample_Dataset.py
+seasonality.ipynb
+ETTh.csv
+
+# ── Claude Code workflow (local only — not shown on GitHub) ──────
+.claude/
+CLAUDE.md
+dev_plan.md
