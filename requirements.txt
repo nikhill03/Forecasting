@@ -68,8 +68,13 @@ structlog==24.4.0              # structured JSON logging
 
 # ── Testing ───────────────────────────────────────────────────────
 pytest==8.3.0
-pytest-asyncio==0.23.0
+# asyncio_default_fixture_loop_scope (pytest.ini) needs >=0.24.0;
+# asyncio_default_test_loop_scope needs >=0.26.0 — both are required
+# for the session-scoped DB engine fixture in conftest.py to share one
+# event loop across the whole run, instead of a fresh loop per test.
+pytest-asyncio==1.4.0
 pytest-cov==5.0.0
+moto[s3]==5.0.20               # in-memory S3 mock; only s3 submodule (not moto[all])
 
 # ── Dev only (not in production Docker image) ─────────────────────
 # black==24.0.0
