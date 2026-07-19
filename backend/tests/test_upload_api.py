@@ -9,11 +9,6 @@ import io
 
 import pandas as pd
 import pytest
-from fastapi.testclient import TestClient
-
-from backend.main import app
-
-client = TestClient(app)
 
 
 def _make_csv_bytes(rows: int = 50) -> bytes:
@@ -42,12 +37,12 @@ def _make_excel_bytes(rows: int = 50) -> bytes:
 
 class TestUploadEndpoint:
 
-    def test_health_check(self):
+    def test_health_check(self, client):
         res = client.get("/health")
         assert res.status_code == 200
         assert res.json()["status"] == "healthy"
 
-    def test_upload_csv_success(self):
+    def test_upload_csv_success(self, client):
         csv_bytes = _make_csv_bytes()
         res = client.post(
             "/api/v1/upload",
@@ -60,7 +55,7 @@ class TestUploadEndpoint:
         assert "date" in data["columns"]["Sheet1"]
         assert data["row_counts"]["Sheet1"] == 50
 
-    def test_upload_excel_success(self):
+    def test_upload_excel_success(self, client):
         xlsx_bytes = _make_excel_bytes()
         res = client.post(
             "/api/v1/upload",
@@ -71,14 +66,14 @@ class TestUploadEndpoint:
         data = res.json()
         assert "upload_id" in data
 
-    def test_upload_unsupported_type(self):
+    def test_upload_unsupported_type(self, client):
         res = client.post(
             "/api/v1/upload",
             files={"file": ("test.txt", b"some text", "text/plain")},
         )
         assert res.status_code == 415
 
-    def test_upload_no_date_column(self):
+    def test_upload_no_date_column(self, client):
         df  = pd.DataFrame({"sales": range(10), "units": range(10)})
         buf = io.BytesIO()
         df.to_csv(buf, index=False)
@@ -89,7 +84,7 @@ class TestUploadEndpoint:
         assert res.status_code == 422
         assert "date column" in res.json()["detail"].lower()
 
-    def test_get_upload_metadata(self):
+    def test_get_upload_metadata(self, client):
         # First upload
         csv_bytes = _make_csv_bytes()
         upload_res = client.post(
@@ -103,6 +98,6 @@ class TestUploadEndpoint:
         assert get_res.status_code == 200
         assert get_res.json()["upload_id"] == upload_id
 
-    def test_get_nonexistent_upload(self):
+    def test_get_nonexistent_upload(self, client):
         res = client.get("/api/v1/upload/nonexistent-id")
         assert res.status_code == 404
