@@ -33,7 +33,7 @@ async def get_current_user_id(
             headers={"WWW-Authenticate": "Bearer"},
         )
     try:
-        payload = decode_token(credentials.credentials)
+        payload = decode_token(credentials.credentials, expected_type="access")
         user_id: str = payload.get("sub")
         if user_id is None:
             raise HTTPException(
@@ -77,7 +77,7 @@ async def get_optional_user_id(
     if credentials is None:
         return None
     try:
-        payload = decode_token(credentials.credentials)
+        payload = decode_token(credentials.credentials, expected_type="access")
         return payload.get("sub")
     except JWTError:
         return None
