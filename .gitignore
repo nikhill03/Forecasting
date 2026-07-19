@@ -27,7 +27,9 @@ debug_outputs/
 # ── Environment variables ─────────────────────────────────────────
 .env
 .env.*
-!.env.example          # keep the example template committed
+# keep the example template committed — git doesn't support inline
+# comments on a pattern line, so this must be a separate line above it
+!.env.example
 
 # ── IDE ───────────────────────────────────────────────────────────
 .vscode/
