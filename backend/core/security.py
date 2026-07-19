@@ -72,19 +72,32 @@ def create_refresh_token(subject: str) -> str:
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def decode_token(token: str) -> dict:
+def decode_token(token: str, expected_type: str | None = None) -> dict:
     """
     Decode and verify a JWT token.
 
+    Parameters
+    ----------
+    expected_type: if given, the token's "type" claim must match this
+                    value or a JWTError is raised (treated the same as
+                    any other decode failure by callers).
+
     Raises
     ------
-    JWTError if token is invalid, expired, or tampered with.
+    JWTError if token is invalid, expired, tampered with, or (when
+    expected_type is given) of the wrong type.
     """
-    return jwt.decode(
+    payload = jwt.decode(
         token,
         settings.SECRET_KEY,
         algorithms=[settings.ALGORITHM],
     )
+    if expected_type is not None and payload.get("type") != expected_type:
+        raise JWTError(
+            f"Invalid token type: expected '{expected_type}', "
+            f"got '{payload.get('type')}'"
+        )
+    return payload
 
 
 def extract_subject(token: str) -> Optional[str]:

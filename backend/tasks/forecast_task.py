@@ -85,8 +85,9 @@ def _update_job_status_sync(
         conn.commit()
         cur.close()
         conn.close()
-    except Exception as e:
-        logger.error(f"DB update failed for job {job_id}: {e}")
+    except Exception:
+        logger.error(f"DB update failed for job {job_id}", exc_info=True)
+        raise
 
 
 def _save_model_runs_sync(job_id: str, results: dict):
@@ -164,10 +165,6 @@ def run_forecast(
     """
     logger.info(f"[{job_id}] Forecast task started")
 
-    _update_job_status_sync(
-        job_id, "running", progress=0, message="Pipeline starting…"
-    )
-
     def progress_hook(percent: int, message: str):
         _update_job_status_sync(
             job_id, "running", progress=percent, message=message
@@ -175,6 +172,18 @@ def run_forecast(
         logger.info(f"[{job_id}] {percent}% — {message}")
 
     try:
+        _update_job_status_sync(
+            job_id, "running", progress=0, message="Pipeline starting…"
+        )
+
+        # The module-level sys.path insert above (near the top of this file)
+        # does not reliably survive to task-execution time inside the Celery
+        # worker process — reproduced even under --pool=solo (no forking), so
+        # this isn't a fork-inheritance issue; root cause not fully understood.
+        # This call-site re-assertion is a verified fix — do not remove as
+        # "redundant" without re-testing a real job end-to-end via /run-dmc --celery.
+        if PROJECT_ROOT not in sys.path:
+            sys.path.insert(0, PROJECT_ROOT)
         from services.processing_engine import processing_worker
 
         file_content = f"data:application/octet-stream;base64,{file_content_b64}"

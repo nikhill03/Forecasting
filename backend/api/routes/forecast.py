@@ -18,6 +18,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,6 +35,7 @@ from backend.models.schemas import (
 from backend.api.routes.upload import get_upload_content
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
+logger = structlog.get_logger("forecasting.forecast")
 
 
 def _normalize_results(results: dict | None) -> dict | None:
@@ -136,34 +138,16 @@ async def submit_forecast(
             args=[job_id, file_content_b64, job.config],
             queue="forecasts",
         )
-        job.celery_task_id = task.id
-        await db.commit()
-        await db.refresh(job)
     except Exception:
-        # Celery not running — fall back to thread (Phase 1 behaviour)
-        import threading
-        await db.commit()
+        logger.error("forecast_enqueue_failed", job_id=job_id, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Forecast queue unavailable",
+        )
 
-        def _run_thread():
-            import asyncio
-            from services.processing_engine import processing_worker
-
-            file_str = f"data:application/octet-stream;base64,{file_content_b64}"
-            try:
-                processing_worker(
-                    file_contents_norm   = file_str,
-                    selected_sheets_list = request.selected_sheets,
-                    selected_metrics     = request.selected_metrics,
-                    selected_x_cols      = request.selected_x_cols,
-                    forecast_horizon     = request.forecast_horizon,
-                    test_window          = request.test_window,
-                    selected_regions     = request.selected_regions,
-                )
-                asyncio.run(_update_db_success(job_id))
-            except Exception as e:
-                asyncio.run(_update_db_error(job_id, str(e)))
-
-        threading.Thread(target=_run_thread, daemon=True).start()
+    job.celery_task_id = task.id
+    await db.commit()
+    await db.refresh(job)
 
     return ForecastJobResponse(
         job_id=job_id,
@@ -174,39 +158,6 @@ async def submit_forecast(
         started_at=None,
         completed_at=None,
     )
-
-
-async def _update_db_success(job_id: str):
-    from backend.core.database import AsyncSessionLocal
-    import json, os
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(ForecastJob).where(ForecastJob.id == job_id))
-        job = result.scalar_one_or_none()
-        if job:
-            predictions_path = os.path.join(
-                os.getcwd(), "outputs", "predictions", "predictions_all.json"
-            )
-            if os.path.exists(predictions_path):
-                with open(predictions_path) as f:
-                    preds = json.load(f)
-                job.s3_output_key = f"local:{predictions_path}"
-            job.status = "success"
-            job.progress_pct = 100
-            job.progress_message = "Completed successfully"
-            job.completed_at = datetime.now(timezone.utc)
-            await db.commit()
-
-
-async def _update_db_error(job_id: str, error: str):
-    from backend.core.database import AsyncSessionLocal
-    async with AsyncSessionLocal() as db:
-        result = await db.execute(select(ForecastJob).where(ForecastJob.id == job_id))
-        job = result.scalar_one_or_none()
-        if job:
-            job.status = "failed"
-            job.error_message = error
-            job.completed_at = datetime.now(timezone.utc)
-            await db.commit()
 
 
 @router.get("/{job_id}/progress", response_model=ProgressResponse)

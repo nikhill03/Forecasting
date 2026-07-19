@@ -25,6 +25,7 @@ passlib[bcrypt]==1.7.4             # password hashing
 # ── Database ──────────────────────────────────────────────────────
 sqlalchemy==2.0.36
 asyncpg==0.30.0                # async PostgreSQL driver
+psycopg2-binary==2.9.10        # sync PostgreSQL driver (for Celery tasks)
 alembic==1.14.0                # DB migrations
 
 # ── Async Task Queue ──────────────────────────────────────────────
