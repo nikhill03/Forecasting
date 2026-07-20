@@ -62,6 +62,12 @@ if "test" not in _test_db_name.lower():
 
 os.environ.setdefault("CELERY_BROKER_URL",     "memory://")
 os.environ.setdefault("CELERY_RESULT_BACKEND", "cache+memory://")
+# slowapi's Limiter (backend.core.dependencies.limiter) is constructed at
+# backend.main import time with storage_uri=settings.REDIS_URL. Default to
+# an in-memory store so the test session never depends on a real Redis
+# instance being reachable; setdefault lets a developer still point at real
+# Redis locally by exporting REDIS_URL before running pytest.
+os.environ.setdefault("REDIS_URL", "memory://")
 # Forced, not setdefault: if a developer's shell already exports real
 # AWS credentials (common for anyone doing manual aws-cli work), those
 # must never flow into settings.AWS_* during a test run — moto's

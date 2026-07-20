@@ -9,14 +9,21 @@ from __future__ import annotations
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import Settings, get_settings
+from backend.core.config import Settings, get_settings, settings
 from backend.core.security import decode_token
 from backend.core.database import get_db
 
 bearer_scheme = HTTPBearer(auto_error=False)
+
+# Shared by backend.main (registers it on app.state) and backend.api.routes.auth
+# (applies it via @limiter.limit(...)). Lives here rather than main.py to avoid a
+# main.py <-> auth.py circular import.
+limiter = Limiter(key_func=get_remote_address, storage_uri=settings.REDIS_URL)
 
 
 def get_config(settings: Settings = Depends(get_settings)) -> Settings:

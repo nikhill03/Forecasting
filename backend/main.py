@@ -18,8 +18,10 @@ import structlog
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
 
 from backend.core.config import settings
+from backend.core.dependencies import limiter
 from backend.api.routes import auth, forecast, upload
 
 # ── Structured logging setup ─────────────────────────────────────
@@ -75,6 +77,9 @@ def create_app() -> FastAPI:
         lifespan    = lifespan,
     )
 
+    # ── Rate limiting ────────────────────────────────────────────
+    app.state.limiter = limiter
+
     # ── CORS ─────────────────────────────────────────────────────
     app.add_middleware(
         CORSMiddleware,
@@ -112,6 +117,18 @@ def create_app() -> FastAPI:
         return JSONResponse(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             content={"success": False, "error": "Internal server error"},
+        )
+
+    # ── Rate limit exceeded handler ────────────────────────────────
+    @app.exception_handler(RateLimitExceeded)
+    async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceeded):
+        return JSONResponse(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            content={
+                "success": False,
+                "error"  : "Too many requests",
+                "detail" : str(exc.detail),
+            },
         )
 
     # ── Health check ──────────────────────────────────────────────

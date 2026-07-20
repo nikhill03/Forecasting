@@ -65,6 +65,9 @@ class Settings(BaseSettings):
     CELERY_BROKER_URL      : str = "redis://localhost:6379/1"
     CELERY_RESULT_BACKEND  : str = "redis://localhost:6379/2"
 
+    # ── Rate Limiting ─────────────────────────────────────────────
+    RATE_LIMIT_AUTH : str = "5/minute"   # shared by /auth/login and /auth/register
+
     # ── AWS ───────────────────────────────────────────────────────
     AWS_ACCESS_KEY_ID     : str = ""
     AWS_SECRET_ACCESS_KEY : str = ""
