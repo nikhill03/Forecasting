@@ -13,7 +13,10 @@ Endpoints:
 """
 from __future__ import annotations
 
+import asyncio
 import base64
+import json
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
@@ -24,7 +27,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.database import get_db
-from backend.core.dependencies import get_optional_user_id
+from backend.core.dependencies import get_current_user_id
 from backend.models.db_models import ForecastJob
 from backend.models.schemas import (
     ForecastJobResponse,
@@ -76,16 +79,50 @@ def _normalize_results(results: dict | None) -> dict | None:
     return normalized
 
 
+def _read_json_file(path: str) -> dict | None:
+    """Sync helper — run via asyncio.to_thread so callers don't block the event loop."""
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
+
+
 async def _job_to_response(job: ForecastJob) -> ForecastJobResponse:
     """Convert ORM object to response schema."""
     results = None
-    if job.status == "success" and job.s3_output_key:
-        try:
-            from backend.storage.s3_client import download_json
-            raw = await download_json(job.s3_output_key)
-            results = _normalize_results(raw)
-        except Exception:
-            results = None
+    if job.status == "success":
+        if job.s3_output_key and job.s3_output_key.startswith("local:"):
+            path = job.s3_output_key.replace("local:", "")
+            try:
+                raw = await asyncio.to_thread(_read_json_file, path)
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning(
+                    "job_results_load_failed", job_id=job.id, error=str(exc)
+                )
+                raw = None
+            if raw is not None:
+                results = _normalize_results(raw)
+        elif job.s3_output_key:
+            try:
+                from backend.storage.s3_client import download_json
+                raw = await download_json(job.s3_output_key)
+                results = _normalize_results(raw)
+            except Exception as exc:
+                logger.warning(
+                    "job_results_load_failed", job_id=job.id, error=str(exc)
+                )
+                results = None
+        else:
+            # No job-scoped storage location recorded. The only remaining
+            # source would be the single global outputs/predictions/
+            # predictions_all.json file shared by every job on the box
+            # (the F5 "concurrent jobs overwrite each other" defect) —
+            # reading it here would leak another tenant's forecast output
+            # through this job's own, correctly-authorized job_id. Return
+            # no results rather than risk a cross-tenant data leak; F5
+            # (job-scoped artifacts) is what makes this branch safe to
+            # populate again.
+            pass
 
     return ForecastJobResponse(
         job_id=job.id,
@@ -104,7 +141,7 @@ async def _job_to_response(job: ForecastJob) -> ForecastJobResponse:
 async def submit_forecast(
     request: ForecastRequest,
     db: AsyncSession = Depends(get_db),
-    user_id: str | None = Depends(get_optional_user_id),
+    user_id: str = Depends(get_current_user_id),
 ) -> ForecastJobResponse:
     """Submit a forecast job. Returns immediately with job_id."""
     file_content = get_upload_content(request.upload_id)
@@ -164,9 +201,12 @@ async def submit_forecast(
 async def get_progress(
     job_id: str,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
 ) -> ProgressResponse:
     result = await db.execute(
-        select(ForecastJob).where(ForecastJob.id == job_id)
+        select(ForecastJob).where(
+            ForecastJob.id == job_id, ForecastJob.user_id == user_id
+        )
     )
     job = result.scalar_one_or_none()
     if not job:
@@ -184,60 +224,30 @@ async def get_progress(
 async def get_job(
     job_id: str,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
 ) -> ForecastJobResponse:
     result = await db.execute(
-        select(ForecastJob).where(ForecastJob.id == job_id)
+        select(ForecastJob).where(
+            ForecastJob.id == job_id, ForecastJob.user_id == user_id
+        )
     )
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
-    # For thread-based fallback: read from local file
-    results = None
-    if job.status == "success":
-        if job.s3_output_key and job.s3_output_key.startswith("local:"):
-            import json, os
-            path = job.s3_output_key.replace("local:", "")
-            if os.path.exists(path):
-                with open(path) as f:
-                    results = _normalize_results(json.load(f))
-        elif job.s3_output_key:
-            try:
-                from backend.storage.s3_client import download_json
-                raw = await download_json(job.s3_output_key)
-                results = _normalize_results(raw)
-            except Exception:
-                pass
-        else:
-            # Final fallback: read from outputs/ directly
-            import json, os
-            path = os.path.join(
-                os.getcwd(), "outputs", "predictions", "predictions_all.json"
-            )
-            if os.path.exists(path):
-                with open(path) as f:
-                    results = _normalize_results(json.load(f))
-
-    return ForecastJobResponse(
-        job_id=job.id,
-        status=job.status,
-        progress=job.progress_pct,
-        message=job.progress_message or "",
-        created_at=job.created_at,
-        started_at=job.started_at,
-        completed_at=job.completed_at,
-        results=results,
-        error=job.error_message,
-    )
+    return await _job_to_response(job)
 
 
 @router.delete("/{job_id}", response_model=SuccessResponse)
 async def stop_job(
     job_id: str,
     db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
 ) -> SuccessResponse:
     result = await db.execute(
-        select(ForecastJob).where(ForecastJob.id == job_id)
+        select(ForecastJob).where(
+            ForecastJob.id == job_id, ForecastJob.user_id == user_id
+        )
     )
     job = result.scalar_one_or_none()
     if not job:

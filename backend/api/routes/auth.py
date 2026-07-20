@@ -15,11 +15,12 @@ Endpoints:
 from __future__ import annotations
 
 from pydantic import BaseModel
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.config import settings
 from backend.core.database import get_db
-from backend.core.dependencies import get_current_user_id
+from backend.core.dependencies import get_current_user_id, limiter
 from backend.models.schemas import (
     SuccessResponse,
     TokenResponse,
@@ -42,21 +43,25 @@ class RefreshTokenRequest(BaseModel):
 
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
+@limiter.limit(settings.RATE_LIMIT_AUTH)
 async def register(
-    request: UserRegisterRequest,
+    payload: UserRegisterRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     """Create a new account. Auto-logs in on success."""
-    return await register_user(request, db)
+    return await register_user(payload, db)
 
 
 @router.post("/login", response_model=TokenResponse)
+@limiter.limit(settings.RATE_LIMIT_AUTH)
 async def login(
-    request: UserLoginRequest,
+    payload: UserLoginRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
     """Login with email + password. Returns access + refresh tokens."""
-    return await login_user(request, db)
+    return await login_user(payload, db)
 
 
 @router.post("/refresh", response_model=TokenResponse)
