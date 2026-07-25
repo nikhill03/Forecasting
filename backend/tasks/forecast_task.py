@@ -188,7 +188,8 @@ def run_forecast(
 
         file_content = f"data:application/octet-stream;base64,{file_content_b64}"
 
-        processing_worker(
+        results = processing_worker(
+            job_id               = job_id,
             file_contents_norm   = file_content,
             selected_sheets_list = config.get("selected_sheets", []),
             selected_metrics     = config.get("selected_metrics", []),
@@ -196,16 +197,14 @@ def run_forecast(
             forecast_horizon     = config.get("forecast_horizon", 60),
             test_window          = config.get("test_window", 30),
             selected_regions     = config.get("selected_regions", ["US", "IN"]),
+            # Pass settings.REDIS_URL explicitly rather than letting
+            # processing_engine.py resolve its own via os.environ — those
+            # two can silently diverge in a real deployment (pydantic-settings'
+            # env_file loading doesn't populate os.environ), which would let
+            # DELETE /forecast/{job_id} write a stop key to a different
+            # Redis than the one this worker checks.
+            redis_url            = settings.REDIS_URL,
         )
-
-        # Read results from file-based output
-        predictions_path = os.path.join(
-            PROJECT_ROOT, "outputs", "predictions", "predictions_all.json"
-        )
-        results = {}
-        if os.path.exists(predictions_path):
-            with open(predictions_path) as f:
-                results = json.load(f)
 
         # Upload to S3 if configured
         s3_key = None

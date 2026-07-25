@@ -14,6 +14,7 @@ from typing import List, Optional, Dict, Any
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import redis
 
 # Local imports
 from utils.forecasting import parse_uploaded_data
@@ -39,14 +40,103 @@ os.makedirs(OUT_PRED_DIR, exist_ok=True)
 
 LOCK_PATH = os.path.join(OUT_BASE, "processing.lock")
 DONE_FLAG = os.path.join(OUT_BASE, "processing_done.flag")
-STOP_FLAG = os.path.join(OUT_BASE, "processing_stop.flag")
-PRED_JSON = os.path.join(OUT_PRED_DIR, "predictions_all.json")
-FIGS_JSON = os.path.join(OUT_PRED_DIR, "figs_all.json")
 DEBUG_LOG = os.path.join(OUT_LOG_DIR, "processing_debug.txt")
 TRACEBACK_FILE = os.path.join(OUT_LOG_DIR, "processing_exception_traceback.txt")
-PROGRESS_JSON = os.path.join(OUT_PRED_DIR, "progress.json")
 STD_LOG = os.path.join(OUT_LOG_DIR, "processing.log")
 HISTORY_LOG = os.path.join(OUT_LOG_DIR, "model_history.csv")
+
+
+# ── Job-scoped output paths ────────────────────────────────────────────
+# Every concurrent job gets its own subdirectory under OUT_PRED_DIR so that
+# two jobs running close together can never clobber each other's results
+# (the F5 defect: a single shared predictions_all.json meant job B's write
+# could overwrite job A's results before job A read them back).
+def _job_pred_dir(job_id: str) -> str:
+    # Defense-in-depth: job_id is always a server-generated uuid4() today
+    # (ForecastJob.id), never client-controlled, so this isn't reachable
+    # under current callers — but nothing here enforced that invariant, so
+    # reject path-traversal-shaped values before they can escape OUT_PRED_DIR.
+    if not job_id or os.sep in job_id or (os.altsep and os.altsep in job_id) or ".." in job_id:
+        raise ValueError(f"invalid job_id: {job_id!r}")
+    path = os.path.join(OUT_PRED_DIR, job_id)
+    os.makedirs(path, exist_ok=True)
+    return path
+
+
+def _job_pred_json(job_id: str) -> str:
+    return os.path.join(_job_pred_dir(job_id), "predictions.json")
+
+
+def _job_figs_json(job_id: str) -> str:
+    return os.path.join(_job_pred_dir(job_id), "figs.json")
+
+
+def _job_progress_json(job_id: str) -> str:
+    return os.path.join(_job_pred_dir(job_id), "progress.json")
+
+
+# ── Per-job stop signal (Redis) ─────────────────────────────────────────
+# This module is a standalone ML engine with no dependency on the backend/
+# FastAPI layer, so it never imports backend.core.config.settings. The
+# caller that DOES have settings (backend/tasks/forecast_task.py) is
+# expected to pass its resolved `settings.REDIS_URL` in explicitly via the
+# `redis_url` parameter threaded through processing_worker() below — the
+# os.environ.get() fallback here exists only for standalone/test callers
+# that construct no Settings object at all.
+#
+# IMPORTANT: do not rely on the os.environ fallback matching
+# settings.REDIS_URL in a real deployment. pydantic-settings' env_file
+# loading populates its own Settings object, NOT the process's actual
+# os.environ — so if REDIS_URL is only set via .env (this project's own
+# documented convention), os.environ.get("REDIS_URL") here will silently
+# return the hardcoded default below instead of the configured value,
+# while backend/api/routes/forecast.py's settings.REDIS_URL resolves
+# correctly. That divergence previously meant DELETE /forecast/{job_id}
+# could write a stop key to one Redis while this module checked another —
+# the stop signal writes successfully and is simply never observed.
+_DEFAULT_REDIS_URL = "redis://localhost:6379/0"
+_REDIS_RETRY_COOLDOWN_SECONDS = 30
+
+_redis_clients: dict[str, Any] = {}
+_redis_retry_at: dict[str, float] = {}
+
+
+def _get_redis_client(redis_url: str | None = None):
+    """Lazily construct (and cache, per URL) a redis client. Never raises —
+    a misconfigured or unreachable Redis (including the test suite's
+    REDIS_URL=memory://, which redis-py cannot parse) must never block
+    module import or a running job. A construction failure is retried
+    after a cooldown rather than latched forever — a permanent latch would
+    mean one transient error permanently disables the stop signal for the
+    rest of this process's life."""
+    url = redis_url or os.environ.get("REDIS_URL", _DEFAULT_REDIS_URL)
+
+    retry_at = _redis_retry_at.get(url)
+    if retry_at is not None and time.time() < retry_at:
+        return None
+
+    if url not in _redis_clients:
+        try:
+            _redis_clients[url] = redis.Redis.from_url(
+                url, socket_connect_timeout=1, socket_timeout=1
+            )
+            _redis_retry_at.pop(url, None)
+        except Exception:
+            _redis_retry_at[url] = time.time() + _REDIS_RETRY_COOLDOWN_SECONDS
+            return None
+    return _redis_clients[url]
+
+
+def _is_stop_requested(job_id: str, redis_url: str | None = None) -> bool:
+    client = _get_redis_client(redis_url)
+    if client is None:
+        return False
+    try:
+        return bool(client.exists(f"dmc:stop:{job_id}"))
+    except Exception:
+        # Fail open: a missed stop check can be retried on the next call;
+        # failing closed would stop every running job on a Redis blip.
+        return False
 
 # Logging setup
 logger = logging.getLogger("dmc.processing")
@@ -60,8 +150,10 @@ if not logger.handlers:
 def _now_ts() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-def _emit_status(total, done, message, completed=False):
-    if os.path.exists(STOP_FLAG):
+def _emit_status(job_id, total, done, message, completed=False, redis_url=None):
+    progress_json = _job_progress_json(job_id)
+
+    if _is_stop_requested(job_id, redis_url):
         stop_data = {
             "percent": int((done / total) * 100) if total > 0 else 0,
             "message": "Execution Stopped by User",
@@ -69,11 +161,11 @@ def _emit_status(total, done, message, completed=False):
             "timestamp": datetime.now().isoformat()
         }
         try:
-            directory = os.path.dirname(PROGRESS_JSON)
+            directory = os.path.dirname(progress_json)
             fd, temp_path = tempfile.mkstemp(dir=directory, text=True)
             with os.fdopen(fd, 'w') as fh:
                 json.dump(stop_data, fh)
-            os.replace(temp_path, PROGRESS_JSON)
+            os.replace(temp_path, progress_json)
         except:
             pass
         _write_debug("Execution STOPPED: Thread terminating immediately.")
@@ -92,13 +184,13 @@ def _emit_status(total, done, message, completed=False):
         data["completed_at"] = datetime.now().isoformat()
 
     try:
-        directory = os.path.dirname(PROGRESS_JSON)
+        directory = os.path.dirname(progress_json)
         fd, temp_path = tempfile.mkstemp(dir=directory, text=True)
         with os.fdopen(fd, 'w') as fh:
             json.dump(data, fh)
         for _ in range(5):
             try:
-                os.replace(temp_path, PROGRESS_JSON)
+                os.replace(temp_path, progress_json)
                 break
             except PermissionError:
                 time.sleep(0.05)
@@ -171,7 +263,19 @@ def remove_lock() -> None:
         pass
 
 def clear_all_outputs() -> None:
-    for p in [PRED_JSON, FIGS_JSON, DONE_FLAG, DEBUG_LOG, TRACEBACK_FILE, PROGRESS_JSON]:
+    # NOTE: this wipes every job's namespaced subdirectory under
+    # OUT_PRED_DIR at once — the exact cross-job blast radius the
+    # job-scoped path builders above otherwise eliminate. Currently unused
+    # by any route/task (grepped repo-wide) so this is inert today; if
+    # this is ever wired into a cleanup task, it must be scoped to a single
+    # job's directory instead, not the whole tree.
+    import shutil
+    try:
+        shutil.rmtree(OUT_PRED_DIR, ignore_errors=True)
+        os.makedirs(OUT_PRED_DIR, exist_ok=True)
+    except Exception:
+        pass
+    for p in [DONE_FLAG, DEBUG_LOG, TRACEBACK_FILE]:
         try:
             if os.path.exists(p):
                 os.remove(p)
@@ -249,6 +353,7 @@ def build_records(
 # Main worker
 # ══════════════════════════════════════════════════════════════════════
 def processing_worker(
+    job_id: str,
     file_contents_norm: str,
     selected_sheets_list: List[str],
     selected_metrics: Optional[List[str]] = None,
@@ -259,16 +364,24 @@ def processing_worker(
     test_window: int = 30,
     x_file_contents: Optional[str] = None,
     selected_regions: list = None,
-) -> None:
+    redis_url: Optional[str] = None,
+) -> dict:
 
     start_time = time.time()
     total_tasks = 0
+    predictions_by_sheet: Dict[str, Any] = {}
 
     try:
-        if os.path.exists(STOP_FLAG):
-            os.remove(STOP_FLAG)
-        if os.path.exists(DONE_FLAG):
+        # os.path.exists(...) then os.remove(...) is a TOCTOU race: DONE_FLAG
+        # is process-wide (not job-scoped, by design — see spec), so two
+        # concurrent jobs can both see it exist and race to remove it. The
+        # loser previously got an uncaught FileNotFoundError here, which the
+        # outer except swallowed and reported as a silent, empty "success".
+        # Confirmed live with two real concurrent Celery workers.
+        try:
             os.remove(DONE_FLAG)
+        except FileNotFoundError:
+            pass
 
         _write_debug("Pipeline execution started.")
 
@@ -281,7 +394,7 @@ def processing_worker(
                 pass
             if not dfs:
                 _write_debug("CRITICAL: Failed to parse input file. Aborting.")
-                return
+                return predictions_by_sheet
 
         df_x_global = None
         if x_file_contents:
@@ -294,9 +407,8 @@ def processing_worker(
             else:
                 _write_debug("Error: Failed to parse external features file.")
 
-        _emit_status(0, 0, "Initializing forecasting engine...")
+        _emit_status(job_id, 0, 0, "Initializing forecasting engine...", redis_url=redis_url)
 
-        predictions_by_sheet: Dict[str, Any] = {}
         figs_by_sheet: Dict[str, Any] = {}
 
         for sheet in (selected_sheets_list or []):
@@ -349,7 +461,7 @@ def processing_worker(
                 metrics_to_run = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
             metrics_to_run = list(dict.fromkeys(metrics_to_run))
 
-            _emit_status(total_tasks, current_progress, f"Analyzing sheet: {sheet}")
+            _emit_status(job_id, total_tasks, current_progress, f"Analyzing sheet: {sheet}", redis_url=redis_url)
 
             sheet_metrics: Dict[str, Any] = {}
             sheet_figs: Dict[str, Any] = {}
@@ -357,7 +469,7 @@ def processing_worker(
             for metric in metrics_to_run:
 
                 # ── Stage 1: Sanitisation ──────────────────────────
-                _emit_status(total_tasks, current_progress, f"Stage 1/5: Sanitizing {sheet}/{metric}...")
+                _emit_status(job_id, total_tasks, current_progress, f"Stage 1/5: Sanitizing {sheet}/{metric}...", redis_url=redis_url)
                 time.sleep(1.0)
                 current_progress += 1
 
@@ -394,7 +506,7 @@ def processing_worker(
                         _write_debug(f"Forecasting Horizon strictly set to: {safe_horizon} days.")
 
                     # ── Stage 2: Feature Engineering ───────────────
-                    _emit_status(total_tasks, current_progress, "Stage 2/5: Processing Features...")
+                    _emit_status(job_id, total_tasks, current_progress, "Stage 2/5: Processing Features...", redis_url=redis_url)
                     time.sleep(1.0)
                     current_progress += 1
 
@@ -513,7 +625,7 @@ def processing_worker(
                     cv = std_val / (mean_val + 1e-6)
 
                     # ── Stage 3: Univariate Models ─────────────────
-                    _emit_status(total_tasks, current_progress, "Stage 3/5: Running Univariate Models...")
+                    _emit_status(job_id, total_tasks, current_progress, "Stage 3/5: Running Univariate Models...", redis_url=redis_url)
                     current_progress += 1
 
                     # ── FIX: Use demand-aware routing ─────────────
@@ -589,7 +701,7 @@ def processing_worker(
                         _write_debug("Evaluating Univariate Models")
 
                         for model_name in fe.models.keys():
-                            if os.path.exists(STOP_FLAG):
+                            if _is_stop_requested(job_id, redis_url):
                                 raise InterruptedError("Stopped by user")
                             try:
                                 test_pred = fe.predict_external_test(
@@ -709,7 +821,7 @@ def processing_worker(
                         continue
 
                     # ── Stage 4: Multivariate ──────────────────────
-                    _emit_status(total_tasks, current_progress, "Stage 4/5: Evaluating Multivariate")
+                    _emit_status(job_id, total_tasks, current_progress, "Stage 4/5: Evaluating Multivariate", redis_url=redis_url)
                     current_progress += 1
 
                     apply_multivariate = accuracy is not None and accuracy < 100.0
@@ -820,7 +932,7 @@ def processing_worker(
                             _write_debug("Multivariate did not improve results. Keeping Univariate.")
 
                     # ── Stage 5: Finalise ──────────────────────────
-                    _emit_status(total_tasks, current_progress, "Stage 5/5: Finalizing Forecast...")
+                    _emit_status(job_id, total_tasks, current_progress, "Stage 5/5: Finalizing Forecast...", redis_url=redis_url)
                     current_progress += 1
 
                     if forecast_series is None:
@@ -959,20 +1071,20 @@ def processing_worker(
             figs_by_sheet[sheet] = sheet_figs
 
             try:
-                with open(PRED_JSON, "w") as fh:
+                with open(_job_pred_json(job_id), "w") as fh:
                     json.dump(predictions_by_sheet, fh, default=str, indent=2)
             except Exception:
                 pass
 
         # Final writes
         try:
-            with open(PRED_JSON, "w") as fh:
+            with open(_job_pred_json(job_id), "w") as fh:
                 json.dump(predictions_by_sheet, fh, default=str, indent=2)
         except Exception as e:
             _write_debug(f"Error: Failed writing predictions: {e}")
 
         try:
-            with open(FIGS_JSON, "w") as fh:
+            with open(_job_figs_json(job_id), "w") as fh:
                 json.dump(figs_by_sheet, fh, default=str, indent=2)
         except Exception as e:
             _write_debug(f"Error: Failed writing figures: {e}")
@@ -985,9 +1097,10 @@ def processing_worker(
         )
 
         _emit_status(
-            total_tasks, total_tasks,
+            job_id, total_tasks, total_tasks,
             f"Processing Completed. 100% (Execution Time: {time_str})",
             completed=True,
+            redis_url=redis_url,
         )
         time.sleep(1.5)
 
@@ -998,9 +1111,10 @@ def processing_worker(
             pass
 
         _write_debug("SUCCESS: Execution completed successfully.")
+        return predictions_by_sheet
 
     except InterruptedError:
-        return
+        return predictions_by_sheet
 
     except Exception as e:
         _write_debug(f"CRITICAL processing worker exception: {e}")
@@ -1009,6 +1123,7 @@ def processing_worker(
                 fh.write(traceback.format_exc())
         except Exception:
             pass
+        return predictions_by_sheet
     finally:
         try:
             remove_lock()
@@ -1017,28 +1132,31 @@ def processing_worker(
 
 
 # ── Reader helpers ────────────────────────────────────────────────────
-def read_predictions_and_figs():
+def read_predictions_and_figs(job_id: str):
     preds, figs = {}, {}
+    pred_json = _job_pred_json(job_id)
+    figs_json = _job_figs_json(job_id)
     try:
-        if os.path.exists(PRED_JSON):
-            with open(PRED_JSON, "r", encoding="utf-8") as fh:
+        if os.path.exists(pred_json):
+            with open(pred_json, "r", encoding="utf-8") as fh:
                 preds = json.load(fh)
     except Exception:
         preds = {}
     try:
-        if os.path.exists(FIGS_JSON):
-            with open(FIGS_JSON, "r", encoding="utf-8") as fh:
+        if os.path.exists(figs_json):
+            with open(figs_json, "r", encoding="utf-8") as fh:
                 figs = json.load(fh)
     except Exception:
         figs = {}
     return preds, figs
 
 
-def read_progress() -> Dict[str, Any]:
+def read_progress(job_id: str) -> Dict[str, Any]:
     progress_data = {"percent": 0, "message": "Waiting..."}
-    if os.path.exists(PROGRESS_JSON):
+    progress_json = _job_progress_json(job_id)
+    if os.path.exists(progress_json):
         try:
-            with open(PROGRESS_JSON, "r") as fh:
+            with open(progress_json, "r") as fh:
                 progress_data = json.load(fh)
         except:
             pass

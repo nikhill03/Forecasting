@@ -17,15 +17,18 @@ import asyncio
 import base64
 import json
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict
 
+import redis
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.config import settings
 from backend.core.database import get_db
 from backend.core.dependencies import get_current_user_id
 from backend.models.db_models import ForecastJob
@@ -39,6 +42,36 @@ from backend.api.routes.upload import get_upload_content
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 logger = structlog.get_logger("forecasting.forecast")
+
+# Job-scoped stop signal — one key per job so DELETE on job A can never
+# affect job B's running worker (the F5 "global stop flag" defect).
+_STOP_KEY_TTL = 3600  # matches run_forecast's Celery time_limit
+_REDIS_RETRY_COOLDOWN_SECONDS = 30
+_redis_client = None
+_redis_retry_at: float | None = None
+
+
+def _get_redis_client():
+    """Lazily construct a redis client, same defensive shape as
+    services/processing_engine.py's — never raises, since a misconfigured
+    or unreachable Redis (including the test suite's REDIS_URL=memory://,
+    which redis-py cannot parse) must not crash module import. A
+    construction failure is retried after a cooldown rather than latched
+    forever — a permanent latch would mean one transient error
+    permanently 503s every future DELETE in this process."""
+    global _redis_client, _redis_retry_at
+    if _redis_retry_at is not None and time.time() < _redis_retry_at:
+        return None
+    if _redis_client is None:
+        try:
+            _redis_client = redis.Redis.from_url(
+                settings.REDIS_URL, socket_connect_timeout=1, socket_timeout=1
+            )
+            _redis_retry_at = None
+        except Exception:
+            _redis_retry_at = time.time() + _REDIS_RETRY_COOLDOWN_SECONDS
+            return None
+    return _redis_client
 
 
 def _normalize_results(results: dict | None) -> dict | None:
@@ -267,12 +300,22 @@ async def stop_job(
         except Exception:
             pass
 
-    # Write stop flag for thread-based fallback
-    import os
-    stop_path = os.path.join(os.getcwd(), "outputs", "processing_stop.flag")
-    os.makedirs(os.path.dirname(stop_path), exist_ok=True)
-    with open(stop_path, "w") as f:
-        f.write(f"stopped:{job_id}")
+    # Signal the per-job stop key so only this job's worker observes it —
+    # a shared/global flag would stop every other running job too (F5).
+    def _set_stop_key() -> None:
+        client = _get_redis_client()
+        if client is None:
+            raise redis.exceptions.RedisError("Redis client unavailable")
+        client.set(f"dmc:stop:{job_id}", "1", ex=_STOP_KEY_TTL)
+
+    try:
+        await asyncio.to_thread(_set_stop_key)
+    except redis.exceptions.RedisError:
+        logger.error("stop_signal_failed", job_id=job_id, exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Stop signal unavailable",
+        )
 
     job.status = "stopped"
     job.completed_at = datetime.now(timezone.utc)

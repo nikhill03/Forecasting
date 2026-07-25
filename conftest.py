@@ -341,3 +341,43 @@ def s3_client():
                 },
             )
         yield s3
+
+
+# ── 11. fake_redis — autouse per-job stop-key fake ──────────────────────
+class _FakeRedis:
+    """
+    Minimal in-memory stand-in for redis-py's Redis client, covering only
+    the .exists/.set/.delete surface F5's per-job stop key needs.
+    """
+
+    def __init__(self) -> None:
+        self._store: dict[str, str] = {}
+
+    def set(self, key: str, value: str, ex: int | None = None) -> None:
+        self._store[key] = value
+
+    def exists(self, key: str) -> bool:
+        return key in self._store
+
+    def delete(self, key: str) -> None:
+        self._store.pop(key, None)
+
+
+@pytest.fixture(autouse=True)
+def fake_redis(monkeypatch):
+    """
+    Autouse so every test gets a working, inspectable fake instead of a
+    real redis.Redis construction attempt against REDIS_URL=memory://
+    (which redis-py cannot parse and would raise). Patches the
+    _get_redis_client() getter in both modules that own one —
+    backend.api.routes.forecast (writes the stop key on DELETE) and
+    services.processing_engine (reads it during processing_worker) — so a
+    write in one and a read in the other see the same store within a test.
+    """
+    import backend.api.routes.forecast as forecast_module
+    import services.processing_engine as processing_engine_module
+
+    fake = _FakeRedis()
+    monkeypatch.setattr(forecast_module, "_get_redis_client", lambda *a, **k: fake)
+    monkeypatch.setattr(processing_engine_module, "_get_redis_client", lambda *a, **k: fake)
+    return fake
