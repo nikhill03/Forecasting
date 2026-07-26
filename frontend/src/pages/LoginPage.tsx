@@ -9,6 +9,7 @@ import { ApiError } from "@/services/client";
 export function LoginPage() {
   const navigate = useNavigate();
   const setTokens = useAuthStore((s) => s.setTokens);
+  const setUser = useAuthStore((s) => s.setUser);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -28,8 +29,17 @@ export function LoginPage() {
           ? err.message
           : "Sign in failed. Please try again.",
       );
-    } finally {
       setIsLoading(false);
+      return;
+    }
+
+    // Non-fatal: a failure here shouldn't undo a successful login. If it
+    // fails, App.tsx's mount hydration effect will retry on next render.
+    try {
+      const profile = await authService.getMe();
+      setUser(profile);
+    } catch {
+      // Intentionally swallowed — see comment above.
     }
   };
 
