@@ -6,6 +6,8 @@ These are injected into route handlers via Depends().
 """
 from __future__ import annotations
 
+import uuid
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError
@@ -88,3 +90,17 @@ async def get_optional_user_id(
         return payload.get("sub")
     except JWTError:
         return None
+
+
+def parse_uuid_or_404(value: str, resource_name: str) -> str:
+    """A malformed ID must be indistinguishable from one that doesn't
+    exist — both 404, never a raw DB type-cast error (asyncpg rejects a
+    non-UUID string against a UUID column with a 500, not a clean 404)."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"{resource_name} '{value}' not found",
+        )
+    return value

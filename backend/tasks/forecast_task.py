@@ -11,7 +11,8 @@ Fixes vs initial version:
 
 from __future__ import annotations
 
-import json
+import asyncio
+import base64
 import logging
 import os
 import sys
@@ -151,7 +152,7 @@ def _save_model_runs_sync(job_id: str, results: dict):
 def run_forecast(
     self: Task,
     job_id: str,
-    file_content_b64: str,
+    s3_input_key: str,
     config: dict,
 ):
     """
@@ -159,9 +160,17 @@ def run_forecast(
 
     Parameters
     ----------
-    job_id          : ForecastJob UUID
-    file_content_b64: base64-encoded file bytes
-    config          : forecast configuration dict
+    job_id       : ForecastJob UUID
+    s3_input_key : S3 object key (or "local:"-prefixed filesystem path in
+                   dev) for the uploaded input file — never a base64 blob
+                   on the Celery/Redis wire.
+    config       : forecast configuration dict
+
+    Note: any direct unit test of this function must call it as a plain
+    sync function, not from inside an `async def` test — asyncio.run()
+    below raises if called from an already-running event loop. Not a
+    concern for HTTP-triggered integration tests, which intercept
+    apply_async via the mock_celery_delay fixture before this body runs.
     """
     logger.info(f"[{job_id}] Forecast task started")
 
@@ -186,6 +195,17 @@ def run_forecast(
             sys.path.insert(0, PROJECT_ROOT)
         from services.processing_engine import processing_worker
 
+        if s3_input_key.startswith("local:"):
+            with open(s3_input_key.removeprefix("local:"), "rb") as f:
+                file_bytes = f.read()
+        else:
+            from backend.storage.s3_client import download_file
+
+            # asyncio.run() assumes a prefork/solo Celery worker pool —
+            # breaks under eventlet/gevent, which already run a loop.
+            file_bytes = asyncio.run(download_file(s3_input_key))
+
+        file_content_b64 = base64.b64encode(file_bytes).decode("utf-8")
         file_content = f"data:application/octet-stream;base64,{file_content_b64}"
 
         results = processing_worker(
@@ -210,20 +230,12 @@ def run_forecast(
         s3_key = None
         if settings.S3_BUCKET_NAME and settings.AWS_ACCESS_KEY_ID:
             try:
-                import boto3
-                s3 = boto3.client(
-                    "s3",
-                    aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-                    aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
-                    region_name=settings.AWS_DEFAULT_REGION,
-                )
+                from backend.storage.s3_client import upload_json
+
                 s3_key = f"{settings.S3_OUTPUT_PREFIX}{job_id}/results.json"
-                s3.put_object(
-                    Bucket=settings.S3_BUCKET_NAME,
-                    Key=s3_key,
-                    Body=json.dumps(results, default=str).encode(),
-                    ContentType="application/json",
-                )
+                # asyncio.run() assumes a prefork/solo Celery worker pool —
+                # breaks under eventlet/gevent, which already run a loop.
+                asyncio.run(upload_json(results, s3_key))
                 logger.info(f"[{job_id}] Results uploaded to S3: {s3_key}")
             except Exception as e:
                 logger.warning(f"[{job_id}] S3 upload skipped: {e}")
