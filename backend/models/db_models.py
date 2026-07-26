@@ -5,6 +5,7 @@ SQLAlchemy ORM models.
 
 Tables:
   users         — registered user accounts
+  uploads       — one row per uploaded file
   forecast_jobs — one row per forecast run
   model_runs    — one row per metric per job
 """
@@ -102,6 +103,37 @@ class ForecastJob(Base):
 
     def __repr__(self) -> str:
         return f"<ForecastJob id={self.id} status={self.status}>"
+
+
+# ── uploads ───────────────────────────────────────────────────────────
+class Upload(Base):
+    __tablename__ = "uploads"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=_uuid
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    s3_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    sheets: Mapped[list] = mapped_column(JSONB, nullable=False)
+    columns: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    row_counts: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # No relationship back to User (unlike ForecastJob.user/User.jobs) —
+    # every query touching this table is owner-scoped directly by
+    # user_id, nothing traverses .user or needs user.uploads.
+
+    def __repr__(self) -> str:
+        return f"<Upload id={self.id} file_name={self.file_name}>"
 
 
 # ── model_runs ────────────────────────────────────────────────────────

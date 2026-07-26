@@ -9,15 +9,16 @@ exist at all — both return 404, never 403.
 
 from __future__ import annotations
 
-import io
 import json
 import os
 import uuid
 from datetime import datetime, timezone
-
-import pandas as pd
+from functools import partial
 
 from backend.models.db_models import ForecastJob
+from conftest import make_csv_bytes
+
+_make_csv_bytes = partial(make_csv_bytes, rows=10, sales=range(10))
 
 
 async def _make_job(db_session, owner_id: str, **overrides) -> ForecastJob:
@@ -34,14 +35,6 @@ async def _make_job(db_session, owner_id: str, **overrides) -> ForecastJob:
     db_session.add(job)
     await db_session.flush()
     return job
-
-
-def _make_csv_bytes(rows: int = 10) -> bytes:
-    dates = pd.date_range("2023-01-01", periods=rows, freq="D")
-    df = pd.DataFrame({"date": dates, "sales": range(rows)})
-    buf = io.BytesIO()
-    df.to_csv(buf, index=False)
-    return buf.getvalue()
 
 
 class TestForecastOwnership:
@@ -171,11 +164,12 @@ class TestForecastSubmitRequiresAuth:
     created job is owned by the caller."""
 
     async def test_submit_forecast_with_auth_creates_owned_job(
-        self, async_client, db_session, test_user, make_auth_headers, mock_celery_delay
+        self, async_client, db_session, test_user, make_auth_headers, mock_celery_delay, s3_client
     ):
         upload_res = await async_client.post(
             "/api/v1/upload",
             files={"file": ("test.csv", _make_csv_bytes(), "text/csv")},
+            headers=make_auth_headers(test_user),
         )
         assert upload_res.status_code == 201
         upload_id = upload_res.json()["upload_id"]

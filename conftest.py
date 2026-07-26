@@ -79,10 +79,12 @@ os.environ["AWS_DEFAULT_REGION"]    = "us-east-1"
 os.environ["S3_BUCKET_NAME"]        = "dmc-test-bucket"
 
 # ── 2. Now safe to import backend.* and third-party test deps ─────────
+import io
 import uuid
 from typing import AsyncGenerator, Iterator
 
 import boto3
+import pandas as pd
 import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
@@ -117,6 +119,40 @@ from backend.tasks.celery_app import celery_app
 # mock_celery_delay to intercept dispatch instead of letting it run.
 celery_app.conf.task_always_eager    = True
 celery_app.conf.task_eager_propagates = True
+
+
+# ── 3b. Shared upload-fixture-file builders ─────────────────────────────
+# Plain functions, not fixtures — same rationale as auth_headers() below:
+# callers need different row counts / column shapes within a single test.
+# Previously duplicated near-identically across test_upload_api.py,
+# test_forecast_auth.py, and test_p2-durable-upload-storage.py.
+def make_csv_bytes(rows: int = 50, **extra_columns) -> bytes:
+    """Minimal valid CSV with a date column. Defaults to sales/units
+    columns; pass explicit column=range(...) kwargs to override."""
+    dates = pd.date_range("2023-01-01", periods=rows, freq="D")
+    data: dict = {"date": dates}
+    data.update(extra_columns or {"sales": range(rows), "units": range(rows, rows * 2)})
+    df = pd.DataFrame(data)
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False)
+    return buf.getvalue()
+
+
+def make_excel_bytes(rows: int = 50, column: str = "revenue") -> bytes:
+    """Minimal valid Excel file with a date column."""
+    dates = pd.date_range("2023-01-01", periods=rows, freq="D")
+    df = pd.DataFrame({"date": dates, column: range(rows)})
+    buf = io.BytesIO()
+    df.to_excel(buf, index=False)
+    return buf.getvalue()
+
+
+def make_no_date_csv_bytes(rows: int = 10) -> bytes:
+    """A CSV with no plausible date column — should fail upload validation."""
+    df = pd.DataFrame({"sales": range(rows), "units": range(rows)})
+    buf = io.BytesIO()
+    df.to_csv(buf, index=False)
+    return buf.getvalue()
 
 
 # ── 4. Session-scoped engine + schema ───────────────────────────────────

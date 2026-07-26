@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend.core.config import settings
 from backend.core.database import Base
-from backend.models.db_models import User, ForecastJob, ModelRun  # noqa: F401
+from backend.models.db_models import User, Upload, ForecastJob, ModelRun  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL.replace("+asyncpg", "+psycopg2"))

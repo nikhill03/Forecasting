@@ -14,7 +14,6 @@ Endpoints:
 from __future__ import annotations
 
 import asyncio
-import base64
 import json
 import os
 import time
@@ -30,15 +29,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
 from backend.core.database import get_db
-from backend.core.dependencies import get_current_user_id
-from backend.models.db_models import ForecastJob
+from backend.core.dependencies import get_current_user_id, parse_uuid_or_404
+from backend.models.db_models import ForecastJob, Upload
 from backend.models.schemas import (
     ForecastJobResponse,
     ForecastRequest,
     ProgressResponse,
     SuccessResponse,
 )
-from backend.api.routes.upload import get_upload_content
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 logger = structlog.get_logger("forecasting.forecast")
@@ -177,8 +175,19 @@ async def submit_forecast(
     user_id: str = Depends(get_current_user_id),
 ) -> ForecastJobResponse:
     """Submit a forecast job. Returns immediately with job_id."""
-    file_content = get_upload_content(request.upload_id)
-    file_content_b64 = base64.b64encode(file_content).decode("utf-8")
+    parse_uuid_or_404(request.upload_id, "Upload")
+
+    result = await db.execute(
+        select(Upload).where(
+            Upload.id == request.upload_id, Upload.user_id == user_id
+        )
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload '{request.upload_id}' not found",
+        )
 
     job = ForecastJob(
         id=str(uuid.uuid4()),
@@ -186,6 +195,7 @@ async def submit_forecast(
         status="pending",
         progress_pct=0,
         progress_message="Job queued",
+        s3_input_key=upload.s3_key,
         config={
             "upload_id"       : request.upload_id,
             "selected_sheets" : request.selected_sheets,
@@ -205,7 +215,7 @@ async def submit_forecast(
     try:
         from backend.tasks.forecast_task import run_forecast
         task = run_forecast.apply_async(
-            args=[job_id, file_content_b64, job.config],
+            args=[job_id, upload.s3_key, job.config],
             queue="forecasts",
         )
     except Exception:
