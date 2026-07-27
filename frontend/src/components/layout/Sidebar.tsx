@@ -8,7 +8,7 @@ interface SidebarProps {
 }
 
 const NAV_ITEMS = [
-  { to: "/", label: "Dashboard", icon: LayoutDashboard, end: true },
+  { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard, end: true },
   { to: "/upload", label: "New Forecast", icon: Upload, end: false },
   { to: "/history", label: "Job History", icon: History, end: false },
 ];

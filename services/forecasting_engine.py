@@ -23,7 +23,15 @@ from __future__ import annotations
 
 import logging
 import warnings
+
+# billiard, not stdlib multiprocessing: Celery's prefork pool workers are
+# themselves daemonic processes, and stdlib multiprocessing refuses to let a
+# daemonic process spawn children ("daemonic processes are not allowed to
+# have children"). billiard is Celery's own multiprocessing fork that lifts
+# that restriction — it's already a celery dependency, not a new one.
+import billiard as mp
 from dataclasses import dataclass, field
+from queue import Empty as QueueEmpty
 from typing import Dict, List, Optional, Callable
 
 import numpy as np
@@ -86,6 +94,65 @@ def _infer_prophet_seasonality(freq: str) -> dict:
         return dict(daily_seasonality=False, weekly_seasonality=False, yearly_seasonality=False)
     else:
         return dict(daily_seasonality=False, weekly_seasonality=True,  yearly_seasonality=True)
+
+
+def _tbats_subprocess_entry(
+    train_values    : np.ndarray,
+    combined_values : np.ndarray,
+    seasonal_period : int,
+    test_len        : int,
+    horizon         : int,
+    result_queue    : "mp.Queue",
+) -> None:
+    """Runs the actual TBATS fit/forecast — see _run_tbats for why this is
+    isolated in a subprocess rather than called directly."""
+    try:
+        from tbats import TBATS as TBATSEstimator
+
+        estimator = TBATSEstimator(
+            seasonal_periods=[seasonal_period] if seasonal_period > 1 else None,
+            use_arma_errors=True,
+            use_box_cox=None,
+            n_jobs=1,
+        )
+
+        model          = estimator.fit(train_values)
+        test_pred_vals = np.maximum(model.forecast(steps=test_len), 0)
+
+        model_full = estimator.fit(combined_values)
+        fc_vals    = np.maximum(model_full.forecast(steps=horizon), 0)
+
+        result_queue.put(("ok", test_pred_vals, fc_vals))
+    except Exception as e:
+        result_queue.put(("error", str(e), None))
+
+
+def _auto_arima_subprocess_entry(
+    train_values : np.ndarray,
+    seasonal     : bool,
+    m            : int,
+    result_queue : "mp.Queue",
+) -> None:
+    """Runs pmdarima.auto_arima — see _run_sarimax for why this is isolated
+    with a timeout rather than called directly."""
+    try:
+        import pmdarima as pm
+
+        auto = pm.auto_arima(
+            train_values,
+            seasonal=seasonal,
+            m=m if seasonal else 1,
+            stepwise=True,
+            suppress_warnings=True,
+            error_action="ignore",
+            max_p=3, max_q=3, max_d=2,
+            max_P=2, max_Q=2,
+            information_criterion="aic",
+            n_jobs=1,
+        )
+        result_queue.put(("ok", auto.order, auto.seasonal_order))
+    except Exception as e:
+        result_queue.put(("error", str(e), None))
 
 
 # ════════════════════════════════════════════════════════════════════
@@ -208,14 +275,33 @@ class ForecastingEngine:
         train      : pd.Series,
         test_index : pd.DatetimeIndex,
     ) -> pd.Series:
-        """Run a model on train and return predictions aligned to test_index."""
-        dummy_test = train.iloc[-1:]
+        """Run a model on train and return predictions aligned to test_index.
+
+        BUG FIX: previously passed `train.iloc[-1:]` (a single row indexed to
+        the last *training* date) as the "test" set. Every model's
+        predictions_test therefore had length 1, indexed to a date outside
+        test_index entirely. reindex(test_index) then found zero overlap,
+        turned every value NaN, and .fillna(0) collapsed the whole test
+        window to all zeros — so every univariate model scored ~100% WMAPE
+        against real (nonzero) actuals, regardless of its real skill. Every
+        _run_* model only ever reads len(test)/test.index (verified: none
+        read test.values), so a same-length placeholder with the *real*
+        test_index — not real actuals, which would be leakage — is
+        sufficient and correct. Values are the last training value repeated
+        (not NaN): several models (TBATS, SARIMAX, ExpSmoothing, LightGBM,
+        HistGB, Theta) also do pd.concat([train, test]) to refit on the
+        combined series before forecasting the real future horizon; NaN
+        values there would corrupt that refit even though
+        predict_external_test only uses predictions_test, not that forecast.
+        """
+        dummy_test = pd.Series(
+            np.full(len(test_index), train.iloc[-1]), index=test_index
+        )
         result = self.models[model_name](train, dummy_test)
         if result is None or result.predictions_test is None:
             raise RuntimeError(f"{model_name} returned no predictions")
-        # Realign to actual test dates
         preds = result.predictions_test
-        if len(preds) != len(test_index):
+        if len(preds) != len(test_index) or not preds.index.equals(test_index):
             preds = preds.reindex(test_index).ffill().fillna(0)
         preds.index = test_index
         return preds
@@ -307,38 +393,58 @@ class ForecastingEngine:
         v2.0: Uses model.forecast(steps=len(test)) for a genuine
         out-of-sample prediction, then refits on full series for the
         future forecast.
+
+        Runs in an isolated "spawn" subprocess: the installed `tbats`
+        package has been observed to segfault (SIGSEGV) intermittently in
+        this environment, reproducible even calling it directly outside
+        Celery — not a fork-safety artifact. A native crash can't be caught
+        by try/except, so without isolation it kills the whole Celery
+        worker process and Celery redelivers the task forever (infinite
+        crash loop). Isolating it here means a crash just fails this one
+        model, like any other model exception below.
         """
+        combined = pd.concat([train, test])
+
         try:
-            from tbats import TBATS as TBATSEstimator
-
-            sp = self.seasonal_period
-            estimator = TBATSEstimator(
-                seasonal_periods=[sp] if sp > 1 else None,
-                use_arma_errors=True,
-                use_box_cox=None,
-                n_jobs=1,
+            ctx          = mp.get_context("spawn")
+            result_queue = ctx.Queue()
+            proc = ctx.Process(
+                target=_tbats_subprocess_entry,
+                args=(
+                    train.values,
+                    combined.values,
+                    self.seasonal_period,
+                    len(test),
+                    self.horizon,
+                    result_queue,
+                ),
             )
+            proc.start()
+            proc.join(timeout=180)
 
-            # Fit on train only
-            model = estimator.fit(train.values)
+            if proc.is_alive():
+                proc.terminate()
+                proc.join()
+                raise RuntimeError("TBATS timed out after 180s")
+            if proc.exitcode != 0:
+                raise RuntimeError(
+                    f"TBATS subprocess crashed (exit code {proc.exitcode})"
+                )
 
-            # TRUE out-of-sample forecast for test window — FIX TD-005
-            test_pred_vals = model.forecast(steps=len(test))
-            test_pred      = pd.Series(
-                np.maximum(test_pred_vals, 0), index=test.index
-            )
+            try:
+                status, a, b = result_queue.get(timeout=5)
+            except QueueEmpty:
+                raise RuntimeError("TBATS subprocess produced no result")
 
-            # Refit on full series for future horizon
-            model_full = estimator.fit(
-                pd.concat([train, test]).values
-            )
-            fc_vals  = model_full.forecast(steps=self.horizon)
-            future_idx = self._future_index(
-                pd.concat([train, test]).index[-1], self.horizon, train.index
-            )
-            forecast = pd.Series(np.maximum(fc_vals, 0), index=future_idx)
+            if status == "error":
+                raise RuntimeError(a)
 
-            return ModelResult("TBATS", model, 0.0, predictions_test=test_pred, forecast=forecast)
+            test_pred_vals, fc_vals = a, b
+            test_pred  = pd.Series(test_pred_vals, index=test.index)
+            future_idx = self._future_index(combined.index[-1], self.horizon, train.index)
+            forecast   = pd.Series(fc_vals, index=future_idx)
+
+            return ModelResult("TBATS", None, 0.0, predictions_test=test_pred, forecast=forecast)
         except Exception as e:
             logger.warning(f"TBATS failed: {e}")
             return None
@@ -450,29 +556,48 @@ class ForecastingEngine:
         FIX (TD-006): Uses pmdarima.auto_arima for automatic order selection.
         v1.0 hardcoded (1,1,1) which frequently underperforms.
         Falls back to (1,1,1) if auto_arima fails or times out.
+
+        auto_arima's stepwise search has no built-in time limit and can run
+        for minutes on noisy/erratic real-world series (observed on a real
+        demo dataset) — the caller (and the user watching the progress page)
+        has no feedback during that time. Bounded to 90s in an isolated
+        subprocess, same pattern as _run_tbats; falls back to (1,1,1) on
+        timeout exactly like the existing exception fallback below.
         """
         try:
-            import pmdarima as pm
             from statsmodels.tsa.statespace.sarimax import SARIMAX
 
             sp = self.seasonal_period
             use_seasonal = sp > 1 and len(train) >= 2 * sp
 
             try:
-                auto = pm.auto_arima(
-                    train,
-                    seasonal=use_seasonal,
-                    m=sp if use_seasonal else 1,
-                    stepwise=True,
-                    suppress_warnings=True,
-                    error_action="ignore",
-                    max_p=3, max_q=3, max_d=2,
-                    max_P=2, max_Q=2,
-                    information_criterion="aic",
-                    n_jobs=1,
+                ctx          = mp.get_context("spawn")
+                result_queue = ctx.Queue()
+                proc = ctx.Process(
+                    target=_auto_arima_subprocess_entry,
+                    args=(train.values, use_seasonal, sp, result_queue),
                 )
-                order         = auto.order
-                seasonal_order = auto.seasonal_order
+                proc.start()
+                proc.join(timeout=90)
+
+                if proc.is_alive():
+                    proc.terminate()
+                    proc.join()
+                    raise RuntimeError("auto_arima timed out after 90s")
+                if proc.exitcode != 0:
+                    raise RuntimeError(
+                        f"auto_arima subprocess crashed (exit code {proc.exitcode})"
+                    )
+
+                try:
+                    status, a, b = result_queue.get(timeout=5)
+                except QueueEmpty:
+                    raise RuntimeError("auto_arima subprocess produced no result")
+
+                if status == "error":
+                    raise RuntimeError(a)
+
+                order, seasonal_order = a, b
                 logger.info(f"auto_arima selected: order={order}, seasonal={seasonal_order}")
             except Exception as ae:
                 logger.warning(f"auto_arima failed ({ae}), falling back to (1,1,1)")

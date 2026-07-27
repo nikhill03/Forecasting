@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
 from backend.core.database import get_db
-from backend.core.dependencies import get_current_user_id, limiter
+from backend.core.dependencies import get_current_user_id, limiter, resolve_annotations
 from backend.models.schemas import (
     SuccessResponse,
     TokenResponse,
@@ -44,6 +44,7 @@ class RefreshTokenRequest(BaseModel):
 
 @router.post("/register", response_model=TokenResponse, status_code=201)
 @limiter.limit(settings.RATE_LIMIT_AUTH)
+@resolve_annotations
 async def register(
     payload: UserRegisterRequest,
     request: Request,
@@ -55,6 +56,7 @@ async def register(
 
 @router.post("/login", response_model=TokenResponse)
 @limiter.limit(settings.RATE_LIMIT_AUTH)
+@resolve_annotations
 async def login(
     payload: UserLoginRequest,
     request: Request,

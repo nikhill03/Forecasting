@@ -6,6 +6,7 @@ Replaces: callbacks/processing.py (Dash-specific callback)
 
 Endpoints:
     POST /api/v1/forecast              — submit a forecast job
+    GET  /api/v1/forecast              — list your past forecast jobs
     GET  /api/v1/forecast/{job_id}     — get job status + results
     GET  /api/v1/forecast/{job_id}/progress — lightweight progress poll
     DELETE /api/v1/forecast/{job_id}   — stop a running job
@@ -23,16 +24,19 @@ from typing import Any, Dict
 
 import redis
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import settings
 from backend.core.database import get_db
 from backend.core.dependencies import get_current_user_id, parse_uuid_or_404
-from backend.models.db_models import ForecastJob, Upload
+from backend.models.db_models import ForecastJob, ModelRun, Upload
 from backend.models.schemas import (
+    ForecastJobListResponse,
     ForecastJobResponse,
+    ForecastJobSummary,
+    ForecastJobMetricSummary,
     ForecastRequest,
     ProgressResponse,
     SuccessResponse,
@@ -118,6 +122,20 @@ def _read_json_file(path: str) -> dict | None:
         return json.load(f)
 
 
+async def _read_live_progress(job_id: str) -> dict | None:
+    """Reads the per-job progress.json that services/processing_engine.py's
+    _emit_status() writes stage-by-stage (job-scoped path — safe under
+    concurrent jobs). Returns None if the file doesn't exist yet (job just
+    started) or fails to parse — callers should fall back to the DB columns
+    in that case, never raise."""
+    path = os.path.join("outputs", "predictions", job_id, "progress.json")
+    try:
+        return await asyncio.to_thread(_read_json_file, path)
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("job_live_progress_load_failed", job_id=job_id, error=str(exc))
+        return None
+
+
 async def _job_to_response(job: ForecastJob) -> ForecastJobResponse:
     """Convert ORM object to response schema."""
     results = None
@@ -168,6 +186,71 @@ async def _job_to_response(job: ForecastJob) -> ForecastJobResponse:
     )
 
 
+@router.get("", response_model=ForecastJobListResponse)
+async def list_jobs(
+    limit: int = Query(20, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> ForecastJobListResponse:
+    """Paginated job history for the current user, newest first. Returns
+    lightweight per-metric summaries from model_runs (best model + WMAPE),
+    not the full results payload — that's only fetched when a specific job
+    is opened via GET /forecast/{job_id}."""
+    count_result = await db.execute(
+        select(func.count())
+        .select_from(ForecastJob)
+        .where(ForecastJob.user_id == user_id)
+    )
+    total = count_result.scalar_one()
+
+    jobs_result = await db.execute(
+        select(ForecastJob)
+        .where(ForecastJob.user_id == user_id)
+        .order_by(ForecastJob.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    jobs = jobs_result.scalars().all()
+
+    metrics_by_job: Dict[str, list[ForecastJobMetricSummary]] = {}
+    job_ids = [j.id for j in jobs]
+    if job_ids:
+        runs_result = await db.execute(
+            select(ModelRun)
+            .where(ModelRun.job_id.in_(job_ids))
+            .order_by(ModelRun.created_at.asc())
+        )
+        for run in runs_result.scalars().all():
+            metrics_by_job.setdefault(run.job_id, []).append(
+                ForecastJobMetricSummary(
+                    sheet_name=run.sheet_name,
+                    metric_name=run.metric_name,
+                    model_name=run.model_name,
+                    wmape=run.wmape,
+                )
+            )
+
+    return ForecastJobListResponse(
+        jobs=[
+            ForecastJobSummary(
+                job_id=job.id,
+                status=job.status,
+                file_name=job.file_name,
+                progress=job.progress_pct,
+                message=job.progress_message or "",
+                created_at=job.created_at,
+                started_at=job.started_at,
+                completed_at=job.completed_at,
+                error=job.error_message,
+                metrics=metrics_by_job.get(job.id, []),
+            )
+            for job in jobs
+        ],
+        total=total,
+    )
+
+
 @router.post("", response_model=ForecastJobResponse, status_code=202)
 async def submit_forecast(
     request: ForecastRequest,
@@ -193,6 +276,7 @@ async def submit_forecast(
         id=str(uuid.uuid4()),
         user_id=user_id,
         status="pending",
+        file_name=upload.file_name,
         progress_pct=0,
         progress_message="Job queued",
         s3_input_key=upload.s3_key,
@@ -255,11 +339,25 @@ async def get_progress(
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
 
+    progress = job.progress_pct
+    message = job.progress_message or ""
+
+    # The DB columns are only written once at job start and once at
+    # completion — services/processing_engine.py emits much more granular,
+    # real-time stage updates to a per-job progress.json in between. Prefer
+    # that while the job is actually running; the DB is authoritative once
+    # terminal (success/failed/stopped already carry their final message).
+    if job.status == "running":
+        live = await _read_live_progress(job_id)
+        if live is not None:
+            progress = live.get("percent", progress)
+            message = live.get("message", message)
+
     return ProgressResponse(
         job_id=job_id,
         status=job.status,
-        progress=job.progress_pct,
-        message=job.progress_message or "",
+        progress=progress,
+        message=message,
     )
 
 

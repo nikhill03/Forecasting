@@ -7,6 +7,7 @@ These are injected into route handlers via Depends().
 from __future__ import annotations
 
 import uuid
+from typing import Callable, TypeVar, get_type_hints
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -26,6 +27,21 @@ bearer_scheme = HTTPBearer(auto_error=False)
 # (applies it via @limiter.limit(...)). Lives here rather than main.py to avoid a
 # main.py <-> auth.py circular import.
 limiter = Limiter(key_func=get_remote_address, storage_uri=settings.REDIS_URL)
+
+_F = TypeVar("_F", bound=Callable)
+
+
+def resolve_annotations(func: _F) -> _F:
+    """Force PEP 563 string annotations to real objects before @limiter.limit wraps func.
+
+    slowapi's rate-limit decorator uses functools.wraps, which copies __annotations__
+    but not __globals__. FastAPI resolves string annotations via the wrapped callable's
+    __globals__, which after wrapping point at slowapi's module — not this route module —
+    so it can never look up types like UserRegisterRequest and openapi.json 500s. Must be
+    the innermost decorator (closest to `def`) so it runs before @limiter.limit wraps func.
+    """
+    func.__annotations__ = get_type_hints(func)
+    return func
 
 
 def get_config(settings: Settings = Depends(get_settings)) -> Settings:

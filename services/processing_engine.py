@@ -17,7 +17,7 @@ import plotly.graph_objects as go
 import redis
 
 # Local imports
-from utils.forecasting import parse_uploaded_data
+from utils.forecasting import parse_uploaded_data, infer_date_column
 from services.forecasting_engine import ForecastingEngine
 from services.data_handling import DataHandling
 from utils.metrics import (
@@ -226,6 +226,24 @@ def normalize_upload_contents(contents) -> Optional[str]:
             return first
     return None
 
+# Tried in order. utf-8-sig also strips a BOM if present; cp1252 covers the
+# smart quotes / em dashes / degree signs Excel commonly writes on Windows;
+# latin-1 always succeeds (every byte is a valid code point) and is the
+# last-resort fallback. Mirrors backend/api/routes/upload.py's _read_csv_any_encoding
+# so a file accepted at upload time doesn't fail to decode again here at job time.
+_CSV_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
+
+
+def _read_csv_any_encoding(decoded: bytes) -> pd.DataFrame:
+    last_error: UnicodeDecodeError | None = None
+    for encoding in _CSV_ENCODINGS:
+        try:
+            return pd.read_csv(io.BytesIO(decoded), encoding=encoding)
+        except UnicodeDecodeError as e:
+            last_error = e
+    raise last_error  # pragma: no cover — latin-1 never raises UnicodeDecodeError
+
+
 def parse_uploaded_data_robust(content_string) -> Dict[str, pd.DataFrame]:
     try:
         if not content_string:
@@ -238,7 +256,7 @@ def parse_uploaded_data_robust(content_string) -> Dict[str, pd.DataFrame]:
             return {s: xls.parse(s) for s in xls.sheet_names}
         except:
             try:
-                df = pd.read_csv(io.BytesIO(decoded))
+                df = _read_csv_any_encoding(decoded)
                 return {"Sheet1": df}
             except Exception as e:
                 _write_debug(f"Parse Error: {e}")
@@ -434,11 +452,10 @@ def processing_worker(
                 continue
 
             # ── Date column detection ──────────────────────────────
-            date_col = None
-            for c in df_raw.columns:
-                if "date" in str(c).lower():
-                    date_col = c
-                    break
+            # Detected by parsing actual values (infer_date_column), not by
+            # matching a column literally named "date" — real datasets name
+            # this column Month, Period, Year, Week, Timestamp, etc.
+            date_col = infer_date_column(df_raw)
 
             df = df_raw.copy()
             if date_col:

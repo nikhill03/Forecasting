@@ -323,12 +323,12 @@ class MultivariateEngine:
         blended_test = sum(w * p.reindex(common_idx).fillna(0)
                            for w, p in zip(weights, test_preds))
 
-        # Blend forecasts
-        fc_preds  = [r["forecast"] for _, r in top_models]
-        fc_idx    = fc_preds[0].index
-        blended_fc = sum(w * p.reindex(fc_idx).fillna(0)
-                         for w, p in zip(weights, fc_preds))
-
+        # No per-model "forecast" exists yet at this point in the pipeline —
+        # the future forecast is only computed once, after a model/blend is
+        # chosen (see run_multivariate's recursive future-row loop, which
+        # already handles the blend case by averaging the component models'
+        # live predictions). Nothing downstream reads this dict's "forecast"
+        # key — the real one comes from that later loop.
         model_names = "+".join([name for name, _ in top_models])
         blended_wmape = wmape(
             test_series if test_series is not None else pd.Series(dtype=float),
@@ -348,7 +348,6 @@ class MultivariateEngine:
             "model"     : None,
             "wmape"     : blended_wmape,
             "test_pred" : blended_test.clip(lower=0),
-            "forecast"  : blended_fc.clip(lower=0),
             "is_booster": False,
             "model_name": f"Ensemble[{model_names}]",
         }
@@ -602,11 +601,25 @@ class MultivariateEngine:
 
         forecast_series = pd.Series(future_preds, index=future_dates)
 
-        # Final metrics on chosen model
-        final_truth = truth.reindex(best_info["test_pred"].index).fillna(0)
-        final_wmape = wmape(final_truth, best_info["test_pred"])
-        final_rmse  = rmse(final_truth, best_info["test_pred"])
-        final_acc   = forecast_accuracy(final_truth, best_info["test_pred"])
+        # Final metrics on chosen model — BUG FIX: previously reindexed truth
+        # onto test_pred's index and filled missing/invalid entries with 0
+        # rather than excluding them (unlike the per-candidate scoring loop
+        # above, which masks them out via valid_mask). That compared a real,
+        # nonzero prediction against a fabricated actual=0 for those rows,
+        # inflating the error — which is why a model's final reported WMAPE
+        # here could disagree with its own per-candidate WMAPE logged above
+        # for the exact same model. Use the same valid_mask convention here.
+        final_test_pred  = best_info["test_pred"]
+        final_truth_full = truth.reindex(final_test_pred.index)
+        final_valid_mask = ~final_truth_full.isna() & (final_truth_full >= 0)
+        final_truth      = final_truth_full[final_valid_mask]
+        final_test_pred  = final_test_pred[final_valid_mask]
+        if len(final_truth) > 0:
+            final_wmape = wmape(final_truth, final_test_pred)
+            final_rmse  = rmse(final_truth, final_test_pred)
+            final_acc   = forecast_accuracy(final_truth, final_test_pred)
+        else:
+            final_wmape, final_rmse, final_acc = float("inf"), 0.0, 0.0
 
         return {
             "train"              : train_series,

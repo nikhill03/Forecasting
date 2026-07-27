@@ -145,6 +145,14 @@ def trend_error(actual: pd.Series, predicted: pd.Series) -> float:
     a = actual.loc[common].values.astype(float)
     p = predicted.loc[common].values.astype(float)
 
+    # A model whose forecast contains even one non-finite value (observed
+    # with ExponentialSmoothing on erratic series) would otherwise poison
+    # polyfit with a NaN slope, propagating into composite_score and making
+    # any comparison against it silently return False — permanently
+    # disqualifying an otherwise-good model from ever being selected.
+    valid = np.isfinite(a) & np.isfinite(p)
+    a, p = a[valid], p[valid]
+
     if len(a) < 2:
         return 0.0
 
@@ -173,6 +181,8 @@ def variance_penalty(
     """
     train_std = float(train_series.std()) + 1e-8
     fc_std    = float(forecast_series.std())
+    if np.isnan(fc_std):
+        return 0.0
     ratio     = fc_std / train_std
 
     if ratio <= tolerance:
@@ -207,6 +217,17 @@ def composite_score(
     score_wmape    = wmape(actual, predicted)
     score_trend    = trend_error(actual, predicted)
     score_variance = variance_penalty(train_series, forecast_series)
+
+    # Defense in depth: trend_error/variance_penalty are now hardened against
+    # non-finite inputs above, but a NaN anywhere in this sum makes the whole
+    # composite NaN, and any `<` comparison against NaN is silently False —
+    # permanently disqualifying an otherwise-good model from selection rather
+    # than raising. Treat an uncomputable penalty term as neutral (0), never
+    # as an automatic disqualification.
+    if np.isnan(score_trend):
+        score_trend = 0.0
+    if np.isnan(score_variance):
+        score_variance = 0.0
 
     return float(
         w_wmape    * score_wmape

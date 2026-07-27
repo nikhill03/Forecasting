@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
 import logging
 import os
 import sys
@@ -31,6 +32,23 @@ from backend.tasks.celery_app import celery_app
 from backend.core.config import settings
 
 logger = logging.getLogger("tasks.forecast")
+
+# Dev-only fallback when S3 isn't configured. Mirrors backend/api/routes/
+# upload.py's _store_locally — same "outputs/" root, same "local:"-prefixed
+# key convention that backend/api/routes/forecast.py's _job_to_response
+# already knows how to read back.
+_LOCAL_OUTPUT_ROOT = "outputs"
+
+
+def _store_results_locally(results: dict, job_id: str) -> str:
+    directory = os.path.join(
+        _LOCAL_OUTPUT_ROOT, settings.S3_OUTPUT_PREFIX.rstrip("/"), job_id
+    )
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(directory, "results.json")
+    with open(path, "w") as f:
+        json.dump(results, f, default=str)
+    return f"local:{path}"
 
 
 # ── Sync DB helper (avoids asyncpg event loop conflicts in Celery) ────
@@ -226,7 +244,9 @@ def run_forecast(
             redis_url            = settings.REDIS_URL,
         )
 
-        # Upload to S3 if configured
+        # Upload to S3 if configured, else fall back to local storage (dev-only —
+        # same pattern as upload.py's local fallback) so results are never
+        # silently dropped just because S3 isn't configured.
         s3_key = None
         if settings.S3_BUCKET_NAME and settings.AWS_ACCESS_KEY_ID:
             try:
@@ -238,8 +258,12 @@ def run_forecast(
                 asyncio.run(upload_json(results, s3_key))
                 logger.info(f"[{job_id}] Results uploaded to S3: {s3_key}")
             except Exception as e:
-                logger.warning(f"[{job_id}] S3 upload skipped: {e}")
+                logger.warning(f"[{job_id}] S3 upload failed, falling back to local storage: {e}")
                 s3_key = None
+
+        if s3_key is None:
+            s3_key = _store_results_locally(results, job_id)
+            logger.info(f"[{job_id}] Results stored locally: {s3_key}")
 
         # Save model run metrics
         _save_model_runs_sync(job_id, results)

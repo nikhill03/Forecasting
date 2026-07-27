@@ -103,6 +103,31 @@ export interface ForecastJobResponse {
   error: string | null;
 }
 
+export interface ForecastJobMetricSummary {
+  sheet_name: string | null;
+  metric_name: string | null;
+  model_name: string | null;
+  wmape: number | null;
+}
+
+export interface ForecastJobSummary {
+  job_id: string;
+  status: JobStatus;
+  file_name: string | null;
+  progress: number;
+  message: string;
+  created_at: string;
+  started_at: string | null;
+  completed_at: string | null;
+  error: string | null;
+  metrics: ForecastJobMetricSummary[];
+}
+
+export interface ForecastJobListResponse {
+  jobs: ForecastJobSummary[];
+  total: number;
+}
+
 export interface ProgressResponse {
   job_id: string;
   status: JobStatus;

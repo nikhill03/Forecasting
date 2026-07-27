@@ -31,11 +31,29 @@ from backend.core.database import get_db
 from backend.core.dependencies import get_current_user_id, parse_uuid_or_404
 from backend.models.db_models import Upload
 from backend.models.schemas import UploadResponse
+from utils.forecasting import infer_date_column
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 logger = structlog.get_logger("forecasting.upload")
 
 _LOCAL_STORAGE_ROOT = "outputs"
+
+
+# Tried in order. utf-8-sig also strips a BOM if present; cp1252 covers the
+# smart quotes / em dashes / degree signs Excel commonly writes on Windows;
+# latin-1 always succeeds (every byte is a valid code point) and is the
+# last-resort fallback.
+_CSV_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
+
+
+def _read_csv_any_encoding(content: bytes) -> pd.DataFrame:
+    last_error: UnicodeDecodeError | None = None
+    for encoding in _CSV_ENCODINGS:
+        try:
+            return pd.read_csv(io.BytesIO(content), encoding=encoding)
+        except UnicodeDecodeError as e:
+            last_error = e
+    raise last_error  # pragma: no cover — latin-1 never raises UnicodeDecodeError
 
 
 def _parse_file(content: bytes, filename: str) -> Dict[str, pd.DataFrame]:
@@ -44,7 +62,7 @@ def _parse_file(content: bytes, filename: str) -> Dict[str, pd.DataFrame]:
             xls = pd.ExcelFile(io.BytesIO(content))
             return {sheet: xls.parse(sheet) for sheet in xls.sheet_names}
         elif filename.endswith(".csv"):
-            df = pd.read_csv(io.BytesIO(content))
+            df = _read_csv_any_encoding(content)
             return {"Sheet1": df}
         else:
             raise ValueError(f"Unsupported file type: {filename}")
@@ -53,13 +71,6 @@ def _parse_file(content: bytes, filename: str) -> Dict[str, pd.DataFrame]:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Failed to parse file: {str(e)}",
         )
-
-
-def _infer_date_column(df: pd.DataFrame) -> str | None:
-    for col in df.columns:
-        if "date" in str(col).lower():
-            return col
-    return None
 
 
 def _reject_unsafe_filename(filename: str) -> None:
@@ -139,7 +150,7 @@ async def upload_file(
 
     sheets_with_dates = {
         name: df for name, df in sheets_df.items()
-        if _infer_date_column(df)
+        if infer_date_column(df)
     }
 
     if not sheets_with_dates:

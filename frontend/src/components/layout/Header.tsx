@@ -25,7 +25,7 @@ export function Header({ onMenuToggle }: HeaderProps) {
         </button>
 
         <Link
-          to="/"
+          to="/dashboard"
           className="flex items-center gap-2 font-semibold text-text"
         >
           <Activity className="h-5 w-5 text-accent" aria-hidden="true" />

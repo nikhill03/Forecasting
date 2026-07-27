@@ -1,14 +1,5 @@
-import {
-  LineChart,
-  Line,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  Legend,
-  ResponsiveContainer,
-  ReferenceLine,
-} from "recharts";
+import ReactECharts from "echarts-for-react";
+import type { EChartsOption } from "echarts";
 import type { ForecastRecord } from "@/types/api";
 import { formatDate, formatNumber } from "@/lib/format";
 
@@ -16,33 +7,20 @@ interface ForecastChartProps {
   records: ForecastRecord[];
 }
 
-interface TooltipPayloadItem {
-  color: string;
-  name: string;
-  value: number;
-}
+// Colors carried over as-is from the previous Recharts implementation —
+// this swap is about adding zoom/pan, not a visual redesign (full site
+// re-theme is planned separately).
+const COLOR_AXIS_LINE  = "#2A3142";
+const COLOR_AXIS_TEXT  = "#5A6173";
+const COLOR_LEGEND     = "#8B92A5";
+const COLOR_TOOLTIP_BG = "#1C212E";
+const COLOR_TEXT       = "#E8EAED";
+const COLOR_BOUNDARY   = "#3B4458";
 
-function CustomTooltip({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: TooltipPayloadItem[];
-  label?: string;
-}) {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="rounded-md border border-border bg-bg-raised px-3 py-2 text-xs shadow-lg">
-      <p className="mb-1 font-medium text-text">{formatDate(label)}</p>
-      {payload.map((p) => (
-        <p key={p.name} style={{ color: p.color }} className="font-mono">
-          {p.name}: {formatNumber(p.value)}
-        </p>
-      ))}
-    </div>
-  );
-}
+const COLOR_ACTUAL          = "#8B92A5";
+const COLOR_TEST_ACTUAL     = "#60A5FA";
+const COLOR_TEST_PREDICTION = "#FBBF24";
+const COLOR_FORECAST        = "#5EEAD4";
 
 export function ForecastChart({ records }: ForecastChartProps) {
   const lastActualIndex = records.findIndex(
@@ -51,87 +29,146 @@ export function ForecastChart({ records }: ForecastChartProps) {
   const boundaryDate =
     lastActualIndex > 0 ? records[lastActualIndex - 1]?.Date : undefined;
 
-  return (
-    <div className="h-80 w-full" role="img" aria-label="Forecast chart showing historical actuals and future predictions">
-      <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={records} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-          <CartesianGrid
-            strokeDasharray="3 3"
-            stroke="#2A3142"
-            vertical={false}
-          />
-          <XAxis
-            dataKey="Date"
-            tickFormatter={(d: string) => formatDate(d, { month: "short", day: "numeric" })}
-            stroke="#5A6173"
-            fontSize={11}
-            tickLine={false}
-            axisLine={{ stroke: "#2A3142" }}
-          />
-          <YAxis
-            stroke="#5A6173"
-            fontSize={11}
-            tickLine={false}
-            axisLine={false}
-            tickFormatter={(v: number) => formatNumber(v, 0)}
-          />
-          <Tooltip content={<CustomTooltip />} />
-          <Legend
-            wrapperStyle={{ fontSize: 12, color: "#8B92A5" }}
-            iconType="line"
-          />
-          {boundaryDate && (
-            <ReferenceLine
-              x={boundaryDate}
-              stroke="#3B4458"
-              strokeDasharray="4 4"
-              label={{
-                value: "Forecast start",
-                position: "insideTopRight",
+  const dates = records.map((r) => r.Date);
+
+  const option: EChartsOption = {
+    grid: { left: 8, right: 16, top: 24, bottom: 64, containLabel: true },
+    xAxis: {
+      type: "category",
+      data: dates,
+      axisLine: { lineStyle: { color: COLOR_AXIS_LINE } },
+      axisTick: { show: false },
+      axisLabel: {
+        color: COLOR_AXIS_TEXT,
+        fontSize: 11,
+        formatter: (value: string) =>
+          formatDate(value, { month: "short", day: "numeric" }),
+      },
+    },
+    yAxis: {
+      type: "value",
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: COLOR_AXIS_LINE, type: "dashed" } },
+      axisLabel: {
+        color: COLOR_AXIS_TEXT,
+        fontSize: 11,
+        formatter: (value: number) => formatNumber(value, 0),
+      },
+    },
+    tooltip: {
+      trigger: "axis",
+      backgroundColor: COLOR_TOOLTIP_BG,
+      borderColor: COLOR_AXIS_LINE,
+      borderWidth: 1,
+      textStyle: { color: COLOR_TEXT, fontSize: 12 },
+      formatter: (params) => {
+        const items = Array.isArray(params) ? params : [params];
+        const first = items[0];
+        if (!first || first.dataIndex === undefined) return "";
+        const date = dates[first.dataIndex];
+        const rows = items
+          .filter((p) => p.value !== null && p.value !== undefined)
+          .map(
+            (p) =>
+              `<div style="color:${String(p.color)}">${p.seriesName}: ${formatNumber(
+                Number(p.value),
+              )}</div>`,
+          )
+          .join("");
+        return `<div style="font-weight:600;margin-bottom:4px">${formatDate(
+          date,
+        )}</div>${rows}`;
+      },
+    },
+    legend: {
+      bottom: 0,
+      textStyle: { color: COLOR_LEGEND, fontSize: 12 },
+      icon: "line",
+    },
+    dataZoom: [
+      { type: "inside", xAxisIndex: 0 },
+      {
+        type: "slider",
+        xAxisIndex: 0,
+        height: 18,
+        bottom: 28,
+        borderColor: COLOR_AXIS_LINE,
+        backgroundColor: "transparent",
+        fillerColor: "rgba(94, 234, 212, 0.12)",
+        handleStyle: { color: COLOR_BOUNDARY },
+        textStyle: { color: COLOR_AXIS_TEXT, fontSize: 10 },
+        dataBackground: {
+          lineStyle: { color: COLOR_AXIS_LINE },
+          areaStyle: { color: COLOR_AXIS_LINE },
+        },
+      },
+    ],
+    series: [
+      {
+        name: "Actual",
+        type: "line",
+        data: records.map((r) => r.TrainActual),
+        connectNulls: true,
+        showSymbol: false,
+        lineStyle: { color: COLOR_ACTUAL, width: 1.5 },
+        itemStyle: { color: COLOR_ACTUAL },
+        markLine: boundaryDate
+          ? {
+              silent: true,
+              symbol: "none",
+              lineStyle: { color: COLOR_BOUNDARY, type: "dashed" },
+              label: {
+                formatter: "Forecast start",
+                color: COLOR_LEGEND,
                 fontSize: 10,
-                fill: "#8B92A5",
-              }}
-            />
-          )}
-          <Line
-            type="monotone"
-            dataKey="TrainActual"
-            name="Actual"
-            stroke="#8B92A5"
-            strokeWidth={1.5}
-            dot={false}
-            connectNulls
-          />
-          <Line
-            type="monotone"
-            dataKey="TestActual"
-            name="Test Actual"
-            stroke="#60A5FA"
-            strokeWidth={1.5}
-            dot={false}
-            connectNulls
-          />
-          <Line
-            type="monotone"
-            dataKey="TestPrediction"
-            name="Test Prediction"
-            stroke="#FBBF24"
-            strokeWidth={1.5}
-            strokeDasharray="4 2"
-            dot={false}
-            connectNulls
-          />
-          <Line
-            type="monotone"
-            dataKey="Forecast"
-            name="Forecast"
-            stroke="#5EEAD4"
-            strokeWidth={2}
-            dot={false}
-            connectNulls
-          />
-        </LineChart>
-      </ResponsiveContainer>
+                position: "insideEndTop",
+              },
+              data: [{ xAxis: boundaryDate }],
+            }
+          : undefined,
+      },
+      {
+        name: "Test Actual",
+        type: "line",
+        data: records.map((r) => r.TestActual),
+        connectNulls: true,
+        showSymbol: false,
+        lineStyle: { color: COLOR_TEST_ACTUAL, width: 1.5 },
+        itemStyle: { color: COLOR_TEST_ACTUAL },
+      },
+      {
+        name: "Test Prediction",
+        type: "line",
+        data: records.map((r) => r.TestPrediction),
+        connectNulls: true,
+        showSymbol: false,
+        lineStyle: { color: COLOR_TEST_PREDICTION, width: 1.5, type: "dashed" },
+        itemStyle: { color: COLOR_TEST_PREDICTION },
+      },
+      {
+        name: "Forecast",
+        type: "line",
+        data: records.map((r) => r.Forecast),
+        connectNulls: true,
+        showSymbol: false,
+        lineStyle: { color: COLOR_FORECAST, width: 2 },
+        itemStyle: { color: COLOR_FORECAST },
+      },
+    ],
+  };
+
+  return (
+    <div
+      className="h-80 w-full"
+      role="img"
+      aria-label="Forecast chart showing historical actuals and future predictions — scroll or drag to zoom"
+    >
+      <ReactECharts
+        option={option}
+        style={{ height: "100%", width: "100%" }}
+        opts={{ renderer: "svg" }}
+      />
     </div>
   );
 }

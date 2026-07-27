@@ -1,5 +1,6 @@
 import { apiClient } from "./client";
 import type {
+  ForecastJobListResponse,
   ForecastJobResponse,
   ForecastRequest,
   ProgressResponse,
@@ -13,6 +14,17 @@ export const forecastService = {
     const { data } = await apiClient.post<ForecastJobResponse>(
       "/forecast",
       request,
+    );
+    return data;
+  },
+
+  async listJobs(
+    limit = 20,
+    offset = 0,
+  ): Promise<ForecastJobListResponse> {
+    const { data } = await apiClient.get<ForecastJobListResponse>(
+      "/forecast",
+      { params: { limit, offset } },
     );
     return data;
   },

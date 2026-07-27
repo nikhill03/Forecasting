@@ -176,6 +176,35 @@ class ProgressResponse(BaseModel):
     message  : str
 
 
+class ForecastJobMetricSummary(BaseModel):
+    sheet_name : Optional[str]
+    metric_name: Optional[str]
+    model_name : Optional[str]
+    wmape      : Optional[float]
+
+
+class ForecastJobSummary(BaseModel):
+    """Lightweight per-job row for the job history list — deliberately
+    excludes the full `results` payload (records/figures), which can be
+    large and isn't needed until the user drills into one job."""
+
+    job_id       : str
+    status       : str
+    file_name    : Optional[str]
+    progress     : int
+    message      : str
+    created_at   : datetime
+    started_at   : Optional[datetime]
+    completed_at : Optional[datetime]
+    error        : Optional[str] = None
+    metrics      : list[ForecastJobMetricSummary] = []
+
+
+class ForecastJobListResponse(BaseModel):
+    jobs : list[ForecastJobSummary]
+    total: int
+
+
 # ══════════════════════════════════════════════════════════════════
 # GENERIC RESPONSE WRAPPERS
 # ══════════════════════════════════════════════════════════════════

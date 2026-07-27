@@ -2,12 +2,16 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { useEffect } from "react";
 import { AppShell } from "@/components/layout/AppShell";
 import { ProtectedRoute } from "@/components/auth/ProtectedRoute";
+import { RedirectIfAuthenticated } from "@/components/auth/RedirectIfAuthenticated";
 import { DashboardPage } from "@/pages/DashboardPage";
 import { UploadPage } from "@/pages/UploadPage";
 import { ConfigurePage } from "@/pages/ConfigurePage";
 import { RunningPage } from "@/pages/RunningPage";
 import { ResultsPage } from "@/pages/ResultsPage";
+import { JobHistoryPage } from "@/pages/JobHistoryPage";
 import { LoginPage } from "@/pages/LoginPage";
+import { RegisterPage } from "@/pages/RegisterPage";
+import { LandingPage } from "@/pages/LandingPage";
 import { useAuthStore } from "@/store/authStore";
 import { authService } from "@/services/authService";
 
@@ -42,14 +46,19 @@ export function App() {
   return (
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route element={<RedirectIfAuthenticated />}>
+          <Route path="/" element={<LandingPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/register" element={<RegisterPage />} />
+        </Route>
         <Route element={<ProtectedRoute />}>
           <Route element={<AppShell />}>
-            <Route path="/" element={<DashboardPage />} />
+            <Route path="/dashboard" element={<DashboardPage />} />
             <Route path="/upload" element={<UploadPage />} />
             <Route path="/configure" element={<ConfigurePage />} />
             <Route path="/running" element={<RunningPage />} />
             <Route path="/results" element={<ResultsPage />} />
+            <Route path="/history" element={<JobHistoryPage />} />
           </Route>
         </Route>
       </Routes>
