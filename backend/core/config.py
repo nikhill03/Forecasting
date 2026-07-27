@@ -78,7 +78,10 @@ class Settings(BaseSettings):
 
     # ── LLM ───────────────────────────────────────────────────────
     HF_TOKEN      : str = ""
-    LLM_MODEL_ID  : str = "Qwen/Qwen2.5-Coder-32B-Instruct"
+    # Confirmed live against HF's auto-provider router (router.huggingface.co/v1/
+    # chat/completions, no provider pinned) — see backend/services/llm_client.py.
+    # The previous 32B Coder model isn't servable on the free tier.
+    LLM_MODEL_ID  : str = "Qwen/Qwen2.5-7B-Instruct"
 
     # ── CORS ──────────────────────────────────────────────────────
     CORS_ORIGINS : List[str] = ["http://localhost:5173", "http://localhost:3000"]
