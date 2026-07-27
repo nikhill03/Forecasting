@@ -173,3 +173,44 @@ class ModelRun(Base):
 
     def __repr__(self) -> str:
         return f"<ModelRun job={self.job_id} metric={self.metric_name} model={self.model_name}>"
+
+
+# ── forecast_edits ────────────────────────────────────────────────────
+# The AI Action Center's persisted operation stack (feature-update.md
+# Feature 2). One row per applied operation, ordered by sequence_no within
+# (job_id, sheet_name, metric_name). Revert = delete the latest row for that
+# scope and replay the remainder from baseline — see
+# backend/services/forecast_edits.py.
+class ForecastEdit(Base):
+    __tablename__ = "forecast_edits"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=_uuid
+    )
+    job_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("forecast_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    sheet_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sequence_no: Mapped[int] = mapped_column(Integer, nullable=False)
+    instruction_text: Mapped[str] = mapped_column(Text, nullable=False)
+    operation_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    params: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    affected_points_before: Mapped[list] = mapped_column(JSONB, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<ForecastEdit job={self.job_id} {self.sheet_name}/{self.metric_name} "
+            f"#{self.sequence_no} {self.operation_type}>"
+        )

@@ -222,6 +222,53 @@ class RenameJobRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════
+# AI ACTION CENTER SCHEMAS (feature-update.md Feature 2)
+# ══════════════════════════════════════════════════════════════════
+
+class ForecastEditSummary(BaseModel):
+    id               : str
+    sequence_no      : int
+    instruction_text : str
+    operation_type   : str
+    params           : Dict[str, Any]
+    created_at       : datetime
+
+
+class ActionCenterState(BaseModel):
+    records: List[ForecastRecord]
+    edits  : List[ForecastEditSummary]
+
+
+class ApplyActionRequest(BaseModel):
+    sheet_name       : str
+    metric_name      : str
+    instruction_text : str = Field(min_length=1, max_length=500)
+
+
+class RevertActionRequest(BaseModel):
+    sheet_name : str
+    metric_name: str
+
+
+# ══════════════════════════════════════════════════════════════════
+# UNDERSTANDABILITY + Q&A SCHEMAS (feature-update.md Feature 3)
+# ══════════════════════════════════════════════════════════════════
+
+class ExplanationResponse(BaseModel):
+    explanation: str
+
+
+class QARequest(BaseModel):
+    sheet_name : str
+    metric_name: str
+    question   : str = Field(min_length=1, max_length=500)
+
+
+class QAResponse(BaseModel):
+    answer: str
+
+
+# ══════════════════════════════════════════════════════════════════
 # GENERIC RESPONSE WRAPPERS
 # ══════════════════════════════════════════════════════════════════
 
