@@ -137,6 +137,28 @@ export interface ProgressResponse {
   message: string;
 }
 
+export interface ForecastEditSummary {
+  id: string;
+  sequence_no: number;
+  instruction_text: string;
+  operation_type: string;
+  params: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ActionCenterState {
+  records: ForecastRecord[];
+  edits: ForecastEditSummary[];
+}
+
+export interface ExplanationResponse {
+  explanation: string;
+}
+
+export interface QAResponse {
+  answer: string;
+}
+
 export interface SuccessResponse {
   success: true;
   message: string;

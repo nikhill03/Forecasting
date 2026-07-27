@@ -29,7 +29,7 @@ export function ResultsPage() {
     );
   }
 
-  if (!result?.results) {
+  if (!activeJobId || !result?.results) {
     return (
       <div className="flex h-64 items-center justify-center text-text-muted">
         No results available.
@@ -69,6 +69,8 @@ export function ResultsPage() {
                 <MetricResultCard
                   key={metric.metric_name}
                   metric={metric}
+                  jobId={activeJobId}
+                  sheetName={sheetName}
                 />
               ))}
             </div>

@@ -1,15 +1,22 @@
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { MetricStat } from "@/components/ui/MetricStat";
 import { DemandBadge } from "@/components/ui/DemandBadge";
 import { ForecastChart } from "@/components/charts/ForecastChart";
+import { ActionCenter } from "@/components/forecast/ActionCenter";
+import { UnderstandabilitySection } from "@/components/forecast/UnderstandabilitySection";
 import { formatWmape, formatPercent, formatNumber } from "@/lib/format";
-import type { MetricResult } from "@/types/api";
+import type { ForecastRecord, MetricResult } from "@/types/api";
 
 interface MetricResultCardProps {
   metric: MetricResult;
+  jobId: string;
+  sheetName: string;
 }
 
-export function MetricResultCard({ metric }: MetricResultCardProps) {
+export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardProps) {
+  const [records, setRecords] = useState<ForecastRecord[]>(metric.records);
+
   return (
     <Card>
       <CardHeader className="flex-wrap gap-2">
@@ -42,7 +49,25 @@ export function MetricResultCard({ metric }: MetricResultCardProps) {
           <MetricStat label="MAE" value={formatNumber(metric.mae)} />
         </div>
 
-        <ForecastChart records={metric.records} />
+        <div className="flex flex-col gap-4 lg:flex-row">
+          <div className="min-w-0 flex-1">
+            <ForecastChart records={records} />
+          </div>
+          {metric.metric_name && (
+            <ActionCenter
+              jobId={jobId}
+              sheetName={sheetName}
+              metricName={metric.metric_name}
+              onRecordsChange={setRecords}
+            />
+          )}
+        </div>
+
+        <UnderstandabilitySection
+          jobId={jobId}
+          sheetName={sheetName}
+          metric={metric}
+        />
       </CardContent>
     </Card>
   );
