@@ -845,8 +845,15 @@ async def export_csv(
     """Computed on demand from baseline + the persisted edit stack — never
     reads from or writes to the job's stored results.json, so exporting can
     never mutate the canonical forecast data. One op_N_<type> column per
-    applied edit shows the forecast immediately after that specific edit,
-    so the user can trace how each change affected the numbers."""
+    applied edit shows the forecast immediately after that specific edit, so
+    the user can trace how each change affected the numbers.
+
+    Column shape depends on whether any edits exist, to avoid two columns
+    ever holding identical values: with no edits there's just "forecast"
+    (baseline == current, so one column is enough); once edits exist,
+    "forecast" is renamed to "baseline_forecast" and followed by one
+    op_N_<type> column per edit — the last of those already *is* the current
+    forecast, so there's no separate trailing "forecast" column."""
     job = await _get_owned_job(job_id, user_id, db)
     baseline = await _load_metric_records(job, sheet_name, metric_name)
     edits = await _get_edit_stack(db, job_id, sheet_name, metric_name)
@@ -858,15 +865,16 @@ async def export_csv(
         column_name = f"op_{edit.sequence_no}_{edit.operation_type}"
         op_columns.append((column_name, {r["Date"]: r["Forecast"] for r in current}))
 
-    final_forecast_by_date = (
-        op_columns[-1][1]
+    baseline_by_date = {r["Date"]: r["Forecast"] for r in baseline}
+    forecast_fieldnames = (
+        ["baseline_forecast"] + [name for name, _ in op_columns]
         if op_columns
-        else {r["Date"]: r["Forecast"] for r in baseline}
+        else ["forecast"]
     )
 
     fieldnames = [
-        "date", "actual_train", "actual_test", "test_prediction", "baseline_forecast",
-    ] + [name for name, _ in op_columns] + ["forecast"]
+        "date", "actual_train", "actual_test", "test_prediction",
+    ] + forecast_fieldnames
 
     output = io.StringIO()
     writer = csv.DictWriter(output, fieldnames=fieldnames)
@@ -878,11 +886,13 @@ async def export_csv(
             "actual_train": row.get("TrainActual"),
             "actual_test": row.get("TestActual"),
             "test_prediction": row.get("TestPrediction"),
-            "baseline_forecast": row.get("Forecast"),
-            "forecast": final_forecast_by_date.get(date),
         }
-        for column_name, lookup in op_columns:
-            out_row[column_name] = lookup.get(date)
+        if op_columns:
+            out_row["baseline_forecast"] = baseline_by_date.get(date)
+            for column_name, lookup in op_columns:
+                out_row[column_name] = lookup.get(date)
+        else:
+            out_row["forecast"] = baseline_by_date.get(date)
         writer.writerow(out_row)
 
     filename = f"{_safe_filename_part(sheet_name)}_{_safe_filename_part(metric_name)}_forecast.csv"
