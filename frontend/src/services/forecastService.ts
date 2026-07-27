@@ -29,6 +29,14 @@ export const forecastService = {
     return data;
   },
 
+  async renameJob(jobId: string, name: string): Promise<ForecastJobResponse> {
+    const { data } = await apiClient.patch<ForecastJobResponse>(
+      `/forecast/${jobId}`,
+      { name },
+    );
+    return data;
+  },
+
   async getProgress(jobId: string): Promise<ProgressResponse> {
     const { data } = await apiClient.get<ProgressResponse>(
       `/forecast/${jobId}/progress`,

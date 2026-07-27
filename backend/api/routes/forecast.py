@@ -39,6 +39,7 @@ from backend.models.schemas import (
     ForecastJobMetricSummary,
     ForecastRequest,
     ProgressResponse,
+    RenameJobRequest,
     SuccessResponse,
 )
 
@@ -176,6 +177,7 @@ async def _job_to_response(job: ForecastJob) -> ForecastJobResponse:
     return ForecastJobResponse(
         job_id=job.id,
         status=job.status,
+        name=job.name,
         progress=job.progress_pct,
         message=job.progress_message or "",
         created_at=job.created_at,
@@ -236,6 +238,7 @@ async def list_jobs(
             ForecastJobSummary(
                 job_id=job.id,
                 status=job.status,
+                name=job.name,
                 file_name=job.file_name,
                 progress=job.progress_pct,
                 message=job.progress_message or "",
@@ -375,6 +378,31 @@ async def get_job(
     job = result.scalar_one_or_none()
     if not job:
         raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    return await _job_to_response(job)
+
+
+@router.patch("/{job_id}", response_model=ForecastJobResponse)
+async def rename_job(
+    job_id: str,
+    request: RenameJobRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> ForecastJobResponse:
+    """Renames a job. Touches only the `name` column — never the run's
+    config, status, or stored results."""
+    result = await db.execute(
+        select(ForecastJob).where(
+            ForecastJob.id == job_id, ForecastJob.user_id == user_id
+        )
+    )
+    job = result.scalar_one_or_none()
+    if not job:
+        raise HTTPException(status_code=404, detail=f"Job '{job_id}' not found")
+
+    job.name = request.name
+    await db.commit()
+    await db.refresh(job)
 
     return await _job_to_response(job)
 

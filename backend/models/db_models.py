@@ -77,6 +77,7 @@ class ForecastJob(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default="pending", index=True
     )
+    name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     file_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
     s3_input_key: Mapped[str | None] = mapped_column(String(500), nullable=True)
     s3_output_key: Mapped[str | None] = mapped_column(String(500), nullable=True)

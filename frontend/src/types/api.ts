@@ -94,6 +94,7 @@ export type JobStatus =
 export interface ForecastJobResponse {
   job_id: string;
   status: JobStatus;
+  name: string | null;
   progress: number;
   message: string;
   created_at: string;
@@ -113,6 +114,7 @@ export interface ForecastJobMetricSummary {
 export interface ForecastJobSummary {
   job_id: string;
   status: JobStatus;
+  name: string | null;
   file_name: string | null;
   progress: number;
   message: string;

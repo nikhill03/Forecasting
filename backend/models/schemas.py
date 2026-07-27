@@ -160,6 +160,7 @@ class ForecastJobResponse(BaseModel):
 
     job_id: str
     status: str
+    name: Optional[str] = None
     progress: int
     message: str
     created_at: datetime
@@ -190,6 +191,7 @@ class ForecastJobSummary(BaseModel):
 
     job_id       : str
     status       : str
+    name         : Optional[str] = None
     file_name    : Optional[str]
     progress     : int
     message      : str
@@ -203,6 +205,20 @@ class ForecastJobSummary(BaseModel):
 class ForecastJobListResponse(BaseModel):
     jobs : list[ForecastJobSummary]
     total: int
+
+
+class RenameJobRequest(BaseModel):
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def name_not_blank(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("name must not be blank")
+        if len(v) > 255:
+            raise ValueError("name must be 255 characters or fewer")
+        return v
 
 
 # ══════════════════════════════════════════════════════════════════
