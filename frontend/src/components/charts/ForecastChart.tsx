@@ -160,7 +160,7 @@ export function ForecastChart({ records }: ForecastChartProps) {
 
   return (
     <div
-      className="h-80 w-full"
+      className="h-80 w-full lg:h-[28rem]"
       role="img"
       aria-label="Forecast chart showing historical actuals and future predictions — scroll or drag to zoom"
     >

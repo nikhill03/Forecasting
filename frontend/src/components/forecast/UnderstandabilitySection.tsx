@@ -67,7 +67,7 @@ export function UnderstandabilitySection({
           Understanding this forecast
         </h3>
 
-        <div className="mb-3 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+        <div className="mb-4 grid grid-cols-2 gap-4 text-xs sm:grid-cols-4 lg:gap-6">
           <div>
             <span className="text-text-subtle">Model</span>
             <p className="text-text-muted">{metric.best_model ?? "—"}</p>

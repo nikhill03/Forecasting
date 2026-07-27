@@ -18,7 +18,7 @@ export function UploadPage() {
   }, [uploadResult, navigate]);
 
   return (
-    <div className="mx-auto max-w-2xl">
+    <div className="mx-auto max-w-3xl">
       <div className="mb-6">
         <h1 className="text-xl font-semibold text-text">New forecast</h1>
         <p className="mt-1 text-sm text-text-muted">

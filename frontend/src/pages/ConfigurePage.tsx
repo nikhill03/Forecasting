@@ -109,7 +109,7 @@ export function ConfigurePage() {
   };
 
   return (
-    <div className="mx-auto max-w-3xl">
+    <div className="mx-auto max-w-5xl">
       <button
         type="button"
         onClick={() => navigate("/upload")}
@@ -129,7 +129,7 @@ export function ConfigurePage() {
         </p>
       </div>
 
-      <div className="space-y-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
             <CardTitle>Sheets to forecast</CardTitle>
@@ -191,9 +191,26 @@ export function ConfigurePage() {
 
         <Card>
           <CardHeader>
+            <CardTitle>Holiday regions</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <MultiSelectChips
+              options={REGIONS.map((r) => r.code)}
+              selected={config.selectedRegions}
+              onToggle={(r) =>
+                toggleInArray(config.selectedRegions, r, (next) =>
+                  updateConfig({ selectedRegions: next }),
+                )
+              }
+            />
+          </CardContent>
+        </Card>
+
+        <Card className="lg:col-span-2">
+          <CardHeader>
             <CardTitle>Forecast settings</CardTitle>
           </CardHeader>
-          <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+          <CardContent className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
             <label className="flex flex-col gap-1.5">
               <span className="text-xs font-medium text-text-muted">
                 Forecast horizon (days)
@@ -228,30 +245,16 @@ export function ConfigurePage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Holiday regions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <MultiSelectChips
-              options={REGIONS.map((r) => r.code)}
-              selected={config.selectedRegions}
-              onToggle={(r) =>
-                toggleInArray(config.selectedRegions, r, (next) =>
-                  updateConfig({ selectedRegions: next }),
-                )
-              }
-            />
-          </CardContent>
-        </Card>
-
         {error && (
-          <div role="alert" className="rounded-md bg-danger/10 px-4 py-3 text-sm text-danger">
+          <div
+            role="alert"
+            className="rounded-md bg-danger/10 px-4 py-3 text-sm text-danger lg:col-span-2"
+          >
             {error}
           </div>
         )}
 
-        <div className="flex justify-end pt-2">
+        <div className="flex justify-end pt-2 lg:col-span-2">
           <Button
             onClick={handleSubmit}
             disabled={!canSubmit}

@@ -39,7 +39,7 @@ export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardP
       </CardHeader>
 
       <CardContent>
-        <div className="mb-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <div className="mb-6 grid grid-cols-2 gap-4 sm:grid-cols-4 lg:gap-6">
           <MetricStat label="WMAPE" value={formatWmape(metric.wmape)} />
           <MetricStat
             label="Accuracy"
@@ -49,7 +49,7 @@ export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardP
           <MetricStat label="MAE" value={formatNumber(metric.mae)} />
         </div>
 
-        <div className="flex flex-col gap-4 lg:flex-row">
+        <div className="flex flex-col gap-6 lg:flex-row">
           <div className="min-w-0 flex-1">
             <ForecastChart records={records} />
           </div>

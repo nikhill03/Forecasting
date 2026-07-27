@@ -85,7 +85,7 @@ export function ActionCenter({
   const edits = data?.edits ?? [];
 
   return (
-    <div className="flex w-full shrink-0 flex-col gap-3 lg:w-72">
+    <div className="flex w-full shrink-0 flex-col gap-3 lg:w-96">
       <div>
         <h3 className="text-sm font-semibold text-text">AI Action Center</h3>
         <p className="mt-1 text-xs text-text-muted">
