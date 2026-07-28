@@ -7,9 +7,10 @@
  *  - DoD: "Unauthenticated navigation to /upload (and /configure, /running,
  *    /results, /dashboard) redirects to /login" — exercised here against the
  *    *actual* route tree (not just the standalone `ProtectedRoute` guard in
- *    isolation), across every protected path named in the spec. Per the
- *    "Frontend Changes" section, the Dashboard page is mounted at "/", so
- *    "/dashboard" in the DoD bullet is verified via the root path.
+ *    isolation), across every protected path named in the spec. "/" is *not*
+ *    in this list: a later change (public `LandingPage`) moved the Dashboard
+ *    to "/dashboard" and made "/" a public marketing route, so "/" is
+ *    covered separately below by the landing-page test instead.
  *  - DoD: "/login renders with no Header/Sidebar chrome" — verified by
  *    asserting the absence of Header/Sidebar landmarks both when navigating
  *    directly to /login and when redirected there from a protected path.
@@ -26,7 +27,7 @@ import { useAuthStore } from "@/store/authStore";
 import { mockUser } from "@/test/handlers";
 import { resetAuthStore, seedAuthenticatedState } from "@/test/authTestUtils";
 
-const PROTECTED_PATHS = ["/", "/upload", "/configure", "/running", "/results"];
+const PROTECTED_PATHS = ["/upload", "/configure", "/running", "/results"];
 
 function navigateTo(path: string): void {
   act(() => {
@@ -88,16 +89,34 @@ describe("App routing — auth guard", () => {
     expect(screen.queryByLabelText("Main navigation")).not.toBeInTheDocument();
   });
 
-  it("does not redirect an authenticated visitor and renders AppShell chrome", async () => {
+  it("renders the public landing page for an unauthenticated visitor at /", async () => {
+    resetAuthStore();
+    navigateTo("/");
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: /forecast demand with/i }),
+      ).toBeInTheDocument();
+    });
+    expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Main navigation")).not.toBeInTheDocument();
+  });
+
+  it("redirects an authenticated visitor away from / and renders AppShell chrome", async () => {
     seedAuthenticatedState({ user: mockUser });
     navigateTo("/");
 
     render(<App />);
 
     await waitFor(() => {
-      expect(screen.getByText("Forecasting Platform")).toBeInTheDocument();
+      expect(screen.getByLabelText("Main navigation")).toBeInTheDocument();
     });
     expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: /forecast demand with/i }),
+    ).not.toBeInTheDocument();
   });
 });
 
