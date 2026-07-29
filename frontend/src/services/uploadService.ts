@@ -1,4 +1,6 @@
 import { apiClient } from "./client";
+import { parseOrThrow } from "@/lib/validateResponse";
+import { UploadResponseSchema } from "@/types/api.schemas";
 import type { UploadResponse } from "@/types/api";
 
 export const uploadService = {
@@ -21,13 +23,17 @@ export const uploadService = {
         },
       },
     );
-    return data;
+    return parseOrThrow(
+      UploadResponseSchema,
+      data,
+      "uploadService.uploadFile",
+    );
   },
 
   async getUpload(uploadId: string): Promise<UploadResponse> {
     const { data } = await apiClient.get<UploadResponse>(
       `/upload/${uploadId}`,
     );
-    return data;
+    return parseOrThrow(UploadResponseSchema, data, "uploadService.getUpload");
   },
 };

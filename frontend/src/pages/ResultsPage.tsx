@@ -65,14 +65,16 @@ export function ResultsPage() {
               {sheetName}
             </h2>
             <div className="space-y-4">
-              {Object.values(sheetResult.metrics).map((metric) => (
-                <MetricResultCard
-                  key={metric.metric_name}
-                  metric={metric}
-                  jobId={activeJobId}
-                  sheetName={sheetName}
-                />
-              ))}
+              {Object.entries(sheetResult.metrics).map(
+                ([metricKey, metric]) => (
+                  <MetricResultCard
+                    key={metricKey}
+                    metric={metric}
+                    jobId={activeJobId}
+                    sheetName={sheetName}
+                  />
+                ),
+              )}
             </div>
           </section>
         ))}

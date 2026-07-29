@@ -1,4 +1,19 @@
 import { apiClient } from "./client";
+import { parseOrThrow } from "@/lib/validateResponse";
+import {
+  ActionCenterStateSchema,
+  ApplyActionRequestSchema,
+  ExplanationResponseSchema,
+  ForecastJobListResponseSchema,
+  ForecastJobResponseSchema,
+  ForecastRequestSchema,
+  ProgressResponseSchema,
+  QARequestSchema,
+  QAResponseSchema,
+  RenameJobRequestSchema,
+  RevertActionRequestSchema,
+  SuccessResponseSchema,
+} from "@/types/api.schemas";
 import type {
   ActionCenterState,
   ExplanationResponse,
@@ -14,11 +29,20 @@ export const forecastService = {
   async submitForecast(
     request: ForecastRequest,
   ): Promise<ForecastJobResponse> {
+    const body = parseOrThrow(
+      ForecastRequestSchema,
+      request,
+      "forecastService.submitForecast:request",
+    );
     const { data } = await apiClient.post<ForecastJobResponse>(
       "/forecast",
-      request,
+      body,
     );
-    return data;
+    return parseOrThrow(
+      ForecastJobResponseSchema,
+      data,
+      "forecastService.submitForecast",
+    );
   },
 
   async listJobs(
@@ -29,36 +53,61 @@ export const forecastService = {
       "/forecast",
       { params: { limit, offset } },
     );
-    return data;
+    return parseOrThrow(
+      ForecastJobListResponseSchema,
+      data,
+      "forecastService.listJobs",
+    );
   },
 
   async renameJob(jobId: string, name: string): Promise<ForecastJobResponse> {
+    const body = parseOrThrow(
+      RenameJobRequestSchema,
+      { name },
+      "forecastService.renameJob:request",
+    );
     const { data } = await apiClient.patch<ForecastJobResponse>(
       `/forecast/${jobId}`,
-      { name },
+      body,
     );
-    return data;
+    return parseOrThrow(
+      ForecastJobResponseSchema,
+      data,
+      "forecastService.renameJob",
+    );
   },
 
   async getProgress(jobId: string): Promise<ProgressResponse> {
     const { data } = await apiClient.get<ProgressResponse>(
       `/forecast/${jobId}/progress`,
     );
-    return data;
+    return parseOrThrow(
+      ProgressResponseSchema,
+      data,
+      "forecastService.getProgress",
+    );
   },
 
   async getJob(jobId: string): Promise<ForecastJobResponse> {
     const { data } = await apiClient.get<ForecastJobResponse>(
       `/forecast/${jobId}`,
     );
-    return data;
+    return parseOrThrow(
+      ForecastJobResponseSchema,
+      data,
+      "forecastService.getJob",
+    );
   },
 
   async stopJob(jobId: string): Promise<SuccessResponse> {
     const { data } = await apiClient.delete<SuccessResponse>(
       `/forecast/${jobId}`,
     );
-    return data;
+    return parseOrThrow(
+      SuccessResponseSchema,
+      data,
+      "forecastService.stopJob",
+    );
   },
 
   async getActionState(
@@ -70,7 +119,11 @@ export const forecastService = {
       `/forecast/${jobId}/actions`,
       { params: { sheet_name: sheetName, metric_name: metricName } },
     );
-    return data;
+    return parseOrThrow(
+      ActionCenterStateSchema,
+      data,
+      "forecastService.getActionState",
+    );
   },
 
   async applyAction(
@@ -79,15 +132,24 @@ export const forecastService = {
     metricName: string,
     instructionText: string,
   ): Promise<ActionCenterState> {
-    const { data } = await apiClient.post<ActionCenterState>(
-      `/forecast/${jobId}/actions`,
+    const body = parseOrThrow(
+      ApplyActionRequestSchema,
       {
         sheet_name: sheetName,
         metric_name: metricName,
         instruction_text: instructionText,
       },
+      "forecastService.applyAction:request",
     );
-    return data;
+    const { data } = await apiClient.post<ActionCenterState>(
+      `/forecast/${jobId}/actions`,
+      body,
+    );
+    return parseOrThrow(
+      ActionCenterStateSchema,
+      data,
+      "forecastService.applyAction",
+    );
   },
 
   async revertAction(
@@ -95,11 +157,20 @@ export const forecastService = {
     sheetName: string,
     metricName: string,
   ): Promise<ActionCenterState> {
+    const body = parseOrThrow(
+      RevertActionRequestSchema,
+      { sheet_name: sheetName, metric_name: metricName },
+      "forecastService.revertAction:request",
+    );
     const { data } = await apiClient.post<ActionCenterState>(
       `/forecast/${jobId}/actions/revert`,
-      { sheet_name: sheetName, metric_name: metricName },
+      body,
     );
-    return data;
+    return parseOrThrow(
+      ActionCenterStateSchema,
+      data,
+      "forecastService.revertAction",
+    );
   },
 
   async getExplanation(
@@ -111,7 +182,11 @@ export const forecastService = {
       `/forecast/${jobId}/explanation`,
       { params: { sheet_name: sheetName, metric_name: metricName } },
     );
-    return data;
+    return parseOrThrow(
+      ExplanationResponseSchema,
+      data,
+      "forecastService.getExplanation",
+    );
   },
 
   async askQuestion(
@@ -120,11 +195,20 @@ export const forecastService = {
     metricName: string,
     question: string,
   ): Promise<QAResponse> {
+    const body = parseOrThrow(
+      QARequestSchema,
+      { sheet_name: sheetName, metric_name: metricName, question },
+      "forecastService.askQuestion:request",
+    );
     const { data } = await apiClient.post<QAResponse>(
       `/forecast/${jobId}/qa`,
-      { sheet_name: sheetName, metric_name: metricName, question },
+      body,
     );
-    return data;
+    return parseOrThrow(
+      QAResponseSchema,
+      data,
+      "forecastService.askQuestion",
+    );
   },
 
   async exportCsv(

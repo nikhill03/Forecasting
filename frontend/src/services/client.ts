@@ -1,6 +1,7 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from "axios";
 import { useAuthStore } from "@/store/authStore";
 import type { ApiValidationError } from "@/types/api";
+import { ApiValidationErrorSchema } from "@/types/api.schemas";
 // Circular import with authService.ts (which imports apiClient from here) is
 // intentional and safe: both modules only touch the cyclic binding inside
 // function bodies, never at module-evaluation time.
@@ -48,8 +49,11 @@ function buildApiError(error: AxiosError<ApiValidationError | { detail: string }
   if (data && "detail" in data) {
     if (typeof data.detail === "string") {
       message = data.detail;
-    } else if (Array.isArray(data.detail)) {
-      message = data.detail.map((e) => e.msg).join("; ");
+    } else {
+      const parsed = ApiValidationErrorSchema.safeParse(data);
+      if (parsed.success) {
+        message = parsed.data.detail.map((e) => e.msg).join("; ");
+      }
     }
   } else if (error.code === "ECONNABORTED") {
     message = "Request timed out. Please check your connection.";
