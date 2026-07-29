@@ -1,180 +1,71 @@
-export interface UserRegisterRequest {
-  email: string;
-  password: string;
-  full_name: string;
-}
+import type { z } from "zod";
+import type {
+  ActionCenterStateSchema,
+  ApiValidationErrorSchema,
+  DemandProfileSchema,
+  DemandTypeSchema,
+  ErrorResponseSchema,
+  ExplanationResponseSchema,
+  ForecastEditSummarySchema,
+  ForecastJobListResponseSchema,
+  ForecastJobMetricSummarySchema,
+  ForecastJobResponseSchema,
+  ForecastJobSummarySchema,
+  ForecastRecordSchema,
+  ForecastRequestSchema,
+  JobStatusSchema,
+  MetricResultSchema,
+  ProgressResponseSchema,
+  QAResponseSchema,
+  SheetResultSchema,
+  SuccessResponseSchema,
+  TokenResponseSchema,
+  UploadResponseSchema,
+  UserLoginRequestSchema,
+  UserRegisterRequestSchema,
+  UserResponseSchema,
+} from "./api.schemas";
 
-export interface UserLoginRequest {
-  email: string;
-  password: string;
-}
+// Types are inferred from the Zod schemas in `api.schemas.ts`, which are the
+// single source of truth for the API contract — never hand-write a duplicate
+// interface here.
 
-export interface TokenResponse {
-  access_token: string;
-  refresh_token: string;
-  token_type: "bearer";
-}
+export type UserRegisterRequest = z.infer<typeof UserRegisterRequestSchema>;
+export type UserLoginRequest = z.infer<typeof UserLoginRequestSchema>;
+export type TokenResponse = z.infer<typeof TokenResponseSchema>;
+export type UserResponse = z.infer<typeof UserResponseSchema>;
 
-export interface UserResponse {
-  id: string;
-  email: string;
-  full_name: string;
-  is_active: boolean;
-  created_at: string;
-}
+export type UploadResponse = z.infer<typeof UploadResponseSchema>;
 
-export interface UploadResponse {
-  upload_id: string;
-  file_name: string;
-  s3_key: string;
-  sheets: string[];
-  columns: Record<string, string[]>;
-  row_counts: Record<string, number>;
-  uploaded_at: string;
-}
+export type ForecastRequest = z.infer<typeof ForecastRequestSchema>;
 
-export interface ForecastRequest {
-  upload_id: string;
-  selected_sheets: string[];
-  selected_metrics: string[];
-  selected_x_cols?: string[];
-  forecast_horizon: number;
-  test_window: number;
-  selected_regions: string[];
-  quantile_level: number;
-}
+export type DemandType = z.infer<typeof DemandTypeSchema>;
+export type DemandProfile = z.infer<typeof DemandProfileSchema>;
+export type ForecastRecord = z.infer<typeof ForecastRecordSchema>;
+export type MetricResult = z.infer<typeof MetricResultSchema>;
+export type SheetResult = z.infer<typeof SheetResultSchema>;
 
-export type DemandType = "Smooth" | "Erratic" | "Intermittent" | "Lumpy";
+export type JobStatus = z.infer<typeof JobStatusSchema>;
+export type ForecastJobResponse = z.infer<typeof ForecastJobResponseSchema>;
 
-export interface DemandProfile {
-  demand_type: DemandType;
-  adi: number;
-  cv2: number;
-  is_intermittent: boolean;
-  is_erratic: boolean;
-  recommended_models: string[];
-}
+export type ForecastJobMetricSummary = z.infer<
+  typeof ForecastJobMetricSummarySchema
+>;
+export type ForecastJobSummary = z.infer<typeof ForecastJobSummarySchema>;
+export type ForecastJobListResponse = z.infer<
+  typeof ForecastJobListResponseSchema
+>;
 
-export interface ForecastRecord {
-  Date: string;
-  TrainActual: number | null;
-  TrainRaw: number | null;
-  TestActual: number | null;
-  TestPrediction: number | null;
-  Forecast: number | null;
-}
+export type ProgressResponse = z.infer<typeof ProgressResponseSchema>;
 
-export interface MetricResult {
-  metric_name: string;
-  best_model: string | null;
-  wmape: number | null;
-  mae: number | null;
-  mape: number | null;
-  rmse: number | null;
-  accuracy: number | null;
-  composite_score: number | null;
-  demand_profile: DemandProfile | null;
-  feature_importance: Record<string, number> | null;
-  forecast_bias: number | null;
-  records: ForecastRecord[];
-}
+export type ForecastEditSummary = z.infer<typeof ForecastEditSummarySchema>;
+export type ActionCenterState = z.infer<typeof ActionCenterStateSchema>;
 
-export interface SheetResult {
-  sheet_name: string;
-  metrics: Record<string, MetricResult>;
-}
+export type ExplanationResponse = z.infer<typeof ExplanationResponseSchema>;
 
-export type JobStatus =
-  | "pending"
-  | "running"
-  | "success"
-  | "failed"
-  | "stopped";
+export type QAResponse = z.infer<typeof QAResponseSchema>;
 
-export interface ForecastJobResponse {
-  job_id: string;
-  status: JobStatus;
-  name: string | null;
-  progress: number;
-  message: string;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  results: Record<string, SheetResult> | null;
-  error: string | null;
-}
+export type SuccessResponse = z.infer<typeof SuccessResponseSchema>;
+export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;
 
-export interface ForecastJobMetricSummary {
-  sheet_name: string | null;
-  metric_name: string | null;
-  model_name: string | null;
-  wmape: number | null;
-}
-
-export interface ForecastJobSummary {
-  job_id: string;
-  status: JobStatus;
-  name: string | null;
-  file_name: string | null;
-  progress: number;
-  message: string;
-  created_at: string;
-  started_at: string | null;
-  completed_at: string | null;
-  error: string | null;
-  metrics: ForecastJobMetricSummary[];
-}
-
-export interface ForecastJobListResponse {
-  jobs: ForecastJobSummary[];
-  total: number;
-}
-
-export interface ProgressResponse {
-  job_id: string;
-  status: JobStatus;
-  progress: number;
-  message: string;
-}
-
-export interface ForecastEditSummary {
-  id: string;
-  sequence_no: number;
-  instruction_text: string;
-  operation_type: string;
-  params: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface ActionCenterState {
-  records: ForecastRecord[];
-  edits: ForecastEditSummary[];
-}
-
-export interface ExplanationResponse {
-  explanation: string;
-}
-
-export interface QAResponse {
-  answer: string;
-}
-
-export interface SuccessResponse {
-  success: true;
-  message: string;
-  data?: unknown;
-}
-
-export interface ErrorResponse {
-  success: false;
-  error: string;
-  detail?: string;
-}
-
-export interface ApiValidationError {
-  detail: Array<{
-    loc: (string | number)[];
-    msg: string;
-    type: string;
-  }>;
-}
+export type ApiValidationError = z.infer<typeof ApiValidationErrorSchema>;
