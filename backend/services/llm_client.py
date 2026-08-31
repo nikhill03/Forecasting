@@ -1,10 +1,13 @@
 """
 backend/services/llm_client.py
 ================================
-Thin async wrapper around Hugging Face's auto-provider Inference router.
-Used by the AI Action Center (NL -> operation parsing, Feature 2) and the
-Understandability section's explanation/Q&A (Feature 3) — one shared model
-per feature-update.md's build decision.
+Thin async wrapper around an OpenAI-compatible chat-completions endpoint.
+Defaults to Hugging Face's auto-provider Inference router but works against
+any compatible endpoint via settings.LLM_BASE_URL — including a local Ollama
+server, which needs no token and incurs no cost. Used by the AI Action
+Center (NL -> operation parsing, Feature 2) and the Understandability
+section's explanation/Q&A (Feature 3) — one shared model per
+feature-update.md's build decision.
 """
 
 from __future__ import annotations
@@ -16,19 +19,13 @@ from backend.core.config import settings
 
 logger = structlog.get_logger("forecasting.llm_client")
 
-# No provider pinned — confirmed necessary. HF's own first-party "hf-inference"
-# provider rejects every commonly-used chat model on the free tier
-# ("Model not supported by provider hf-inference"), but this generic
-# auto-provider router successfully routes to a third-party backend that
-# actually serves settings.LLM_MODEL_ID.
-_ROUTER_URL = "https://router.huggingface.co/v1/chat/completions"
 _TIMEOUT_SECONDS = 30.0
 
 
 class LLMClientError(Exception):
-    """Raised when the HF router call fails or returns an unusable response.
-    Callers must catch this and degrade gracefully (e.g. "AI assistant
-    unavailable") — never let it bubble up and crash a request."""
+    """Raised when the LLM endpoint call fails or returns an unusable
+    response. Callers must catch this and degrade gracefully (e.g. "AI
+    assistant unavailable") — never let it bubble up and crash a request."""
 
 
 async def chat_completion(
@@ -37,9 +34,11 @@ async def chat_completion(
     temperature: float = 0.2,
 ) -> str:
     """Sends a chat-completions request and returns the assistant's message
-    content. Raises LLMClientError on any failure — timeout, non-2xx,
-    missing/expired token, or an unexpected response shape."""
-    if not settings.HF_TOKEN:
+    content. Raises LLMClientError on any failure — timeout, non-2xx, or an
+    unexpected response shape. A missing HF_TOKEN is only an error against
+    the default HF router; a local endpoint (e.g. Ollama) needs none."""
+    is_hf_router = settings.LLM_BASE_URL == "https://router.huggingface.co/v1/chat/completions"
+    if is_hf_router and not settings.HF_TOKEN:
         raise LLMClientError("HF_TOKEN is not configured")
 
     payload = {
@@ -48,12 +47,13 @@ async def chat_completion(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
+    headers = {"Authorization": f"Bearer {settings.HF_TOKEN}"} if settings.HF_TOKEN else {}
 
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT_SECONDS) as client:
             response = await client.post(
-                _ROUTER_URL,
-                headers={"Authorization": f"Bearer {settings.HF_TOKEN}"},
+                settings.LLM_BASE_URL,
+                headers=headers,
                 json=payload,
             )
     except httpx.TimeoutException as exc:

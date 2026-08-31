@@ -77,10 +77,14 @@ class Settings(BaseSettings):
     S3_OUTPUT_PREFIX      : str = "outputs/"
 
     # ── LLM ───────────────────────────────────────────────────────
+    # Default targets HF's auto-provider router — requires HF_TOKEN plus a
+    # billed/enabled Inference Provider on that account. For zero-cost local
+    # inference, point this at a local Ollama server instead (no token needed):
+    #   LLM_BASE_URL=http://localhost:11434/v1/chat/completions
+    #   LLM_MODEL_ID=qwen2.5:7b-instruct
+    #   HF_TOKEN=            (leave blank)
+    LLM_BASE_URL  : str = "https://router.huggingface.co/v1/chat/completions"
     HF_TOKEN      : str = ""
-    # Confirmed live against HF's auto-provider router (router.huggingface.co/v1/
-    # chat/completions, no provider pinned) — see backend/services/llm_client.py.
-    # The previous 32B Coder model isn't servable on the free tier.
     LLM_MODEL_ID  : str = "Qwen/Qwen2.5-7B-Instruct"
 
     # ── CORS ──────────────────────────────────────────────────────
