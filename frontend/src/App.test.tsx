@@ -69,7 +69,10 @@ describe("App routing — auth guard", () => {
       await waitFor(() => {
         expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
       });
-      expect(screen.queryByText("Forecasting Platform")).not.toBeInTheDocument();
+      // LoginPage itself links back to "/" carrying the brand wordmark as
+      // page content — assert on the AppShell's <header> landmark instead
+      // of the text, since that's what's actually being guarded against.
+      expect(document.querySelector("header")).not.toBeInTheDocument();
       expect(
         screen.queryByLabelText("Main navigation"),
       ).not.toBeInTheDocument();
@@ -85,7 +88,7 @@ describe("App routing — auth guard", () => {
     await waitFor(() => {
       expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
     });
-    expect(screen.queryByText("Forecasting Platform")).not.toBeInTheDocument();
+    expect(document.querySelector("header")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Main navigation")).not.toBeInTheDocument();
   });
 
@@ -97,7 +100,7 @@ describe("App routing — auth guard", () => {
 
     await waitFor(() => {
       expect(
-        screen.getByRole("heading", { name: /forecast demand with/i }),
+        screen.getByRole("heading", { name: /every series, classified/i }),
       ).toBeInTheDocument();
     });
     expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
@@ -115,7 +118,7 @@ describe("App routing — auth guard", () => {
     });
     expect(screen.queryByLabelText(/email/i)).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("heading", { name: /forecast demand with/i }),
+      screen.queryByRole("heading", { name: /every series, classified/i }),
     ).not.toBeInTheDocument();
   });
 });

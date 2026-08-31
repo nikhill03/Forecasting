@@ -11,6 +11,8 @@ const VARIANT_CLASSES = {
   danger: "bg-danger/10 text-danger border border-danger/30 hover:bg-danger/20",
 } as const;
 
+const VARIANT_ACTIVE_SCALE = "active:scale-[0.98]";
+
 const SIZE_CLASSES = {
   sm: "h-8 px-3 text-sm gap-1.5",
   md: "h-10 px-4 text-sm gap-2",
@@ -46,10 +48,11 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         aria-busy={isLoading}
         className={cn(
           "inline-flex items-center justify-center rounded-md font-medium",
-          "transition-colors duration-150",
-          "disabled:opacity-50 disabled:cursor-not-allowed",
+          "transition-[background-color,border-color,color,transform] duration-150",
+          "disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100",
           "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-bg",
           VARIANT_CLASSES[variant],
+          VARIANT_ACTIVE_SCALE,
           SIZE_CLASSES[size],
           className,
         )}

@@ -7,20 +7,17 @@ interface ForecastChartProps {
   records: ForecastRecord[];
 }
 
-// Colors carried over as-is from the previous Recharts implementation —
-// this swap is about adding zoom/pan, not a visual redesign (full site
-// re-theme is planned separately).
-const COLOR_AXIS_LINE  = "#2A3142";
-const COLOR_AXIS_TEXT  = "#5A6173";
-const COLOR_LEGEND     = "#8B92A5";
-const COLOR_TOOLTIP_BG = "#1C212E";
-const COLOR_TEXT       = "#E8EAED";
-const COLOR_BOUNDARY   = "#3B4458";
+const COLOR_AXIS_LINE  = "#252D48";
+const COLOR_AXIS_TEXT  = "#616B93";
+const COLOR_LEGEND     = "#99A2C4";
+const COLOR_TOOLTIP_BG = "#1B2238";
+const COLOR_TEXT       = "#EEF0F7";
+const COLOR_BOUNDARY   = "#39456B";
 
-const COLOR_ACTUAL          = "#8B92A5";
-const COLOR_TEST_ACTUAL     = "#60A5FA";
-const COLOR_TEST_PREDICTION = "#FBBF24";
-const COLOR_FORECAST        = "#5EEAD4";
+const COLOR_ACTUAL          = "#99A2C4";
+const COLOR_TEST_ACTUAL     = "#7C9CF2";
+const COLOR_TEST_PREDICTION = "#F5C451";
+const COLOR_FORECAST        = "#E8A23D";
 
 export function ForecastChart({ records }: ForecastChartProps) {
   const lastActualIndex = records.findIndex(
@@ -95,7 +92,7 @@ export function ForecastChart({ records }: ForecastChartProps) {
         bottom: 28,
         borderColor: COLOR_AXIS_LINE,
         backgroundColor: "transparent",
-        fillerColor: "rgba(94, 234, 212, 0.12)",
+        fillerColor: "rgba(232, 162, 61, 0.14)",
         handleStyle: { color: COLOR_BOUNDARY },
         textStyle: { color: COLOR_AXIS_TEXT, fontSize: 10 },
         dataBackground: {

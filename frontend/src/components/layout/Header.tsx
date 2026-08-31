@@ -1,8 +1,9 @@
 import { Link } from "react-router-dom";
-import { Menu, Activity, LogOut, User } from "lucide-react";
+import { Menu, LogOut, User } from "lucide-react";
 import { useState } from "react";
 import { useAuthStore } from "@/store/authStore";
 import { Button } from "@/components/ui/Button";
+import { BrandMark } from "@/components/ui/BrandMark";
 
 interface HeaderProps {
   onMenuToggle?: () => void;
@@ -26,9 +27,9 @@ export function Header({ onMenuToggle }: HeaderProps) {
 
         <Link
           to="/dashboard"
-          className="flex items-center gap-2 font-semibold text-text"
+          className="flex items-center gap-2 font-display font-semibold text-text"
         >
-          <Activity className="h-5 w-5 text-accent" aria-hidden="true" />
+          <BrandMark className="h-5 w-5" />
           <span className="hidden sm:inline">Forecasting Platform</span>
         </Link>
       </div>

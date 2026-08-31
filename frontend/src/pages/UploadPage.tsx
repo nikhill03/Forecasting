@@ -27,7 +27,7 @@ export function UploadPage() {
         </p>
       </div>
 
-      <Card>
+      <Card className="tick-corners">
         <CardHeader>
           <CardTitle>Upload dataset</CardTitle>
         </CardHeader>

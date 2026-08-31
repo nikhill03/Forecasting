@@ -75,3 +75,5 @@ ETTh.csv
 .claude/
 CLAUDE.md
 dev_plan.md
+# Playwright MCP scratch output (console logs, page snapshots)
+.playwright-mcp/

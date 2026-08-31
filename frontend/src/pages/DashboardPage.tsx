@@ -1,7 +1,8 @@
 import { Link } from "react-router-dom";
-import { Upload, TrendingUp } from "lucide-react";
+import { Upload } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { BrandMark } from "@/components/ui/BrandMark";
 
 export function DashboardPage() {
   return (
@@ -13,10 +14,10 @@ export function DashboardPage() {
         </p>
       </div>
 
-      <Card>
+      <Card className="tick-corners">
         <CardContent className="flex flex-col items-center gap-4 py-12 text-center">
           <div className="rounded-full bg-accent/10 p-4">
-            <TrendingUp className="h-8 w-8 text-accent" aria-hidden="true" />
+            <BrandMark className="h-8 w-8" />
           </div>
           <div>
             <h2 className="text-base font-semibold text-text">

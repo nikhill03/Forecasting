@@ -7,7 +7,10 @@ export const Card = forwardRef<
 >(({ className, ...props }, ref) => (
   <div
     ref={ref}
-    className={cn("rounded-lg border border-border bg-bg-surface", className)}
+    className={cn(
+      "rounded-lg border border-border bg-bg-surface transition-colors duration-150",
+      className,
+    )}
     {...props}
   />
 ));

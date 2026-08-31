@@ -18,7 +18,7 @@ export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardP
   const [records, setRecords] = useState<ForecastRecord[]>(metric.records);
 
   return (
-    <Card>
+    <Card className="tick-corners">
       <CardHeader className="flex-wrap gap-2">
         <div className="flex items-center gap-2">
           <CardTitle>{metric.metric_name}</CardTitle>

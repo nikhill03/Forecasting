@@ -52,10 +52,10 @@ export function Sidebar({ open, onClose }: SidebarProps) {
               onClick={onClose}
               className={({ isActive }) =>
                 cn(
-                  "flex items-center gap-2.5 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "flex items-center gap-2.5 rounded-md border-l-2 px-3 py-2 text-sm font-medium transition-colors",
                   isActive
-                    ? "bg-accent/10 text-accent"
-                    : "text-text-muted hover:bg-bg-raised hover:text-text",
+                    ? "border-accent bg-accent/[0.08] text-accent"
+                    : "border-transparent text-text-muted hover:border-border-strong hover:bg-bg-raised hover:text-text",
                 )
               }
             >

@@ -14,6 +14,18 @@
   body {
     @apply bg-bg text-text;
     font-feature-settings: "cv11", "ss01";
+    background-image: theme("backgroundImage.grid");
+    background-size: theme("backgroundSize.grid");
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    background-color: theme("colors.accent.DEFAULT" / 30%);
+    color: theme("colors.text.DEFAULT");
+  }
+
+  h1, h2, h3, h4 {
+    @apply font-display;
   }
 
   :focus-visible {
@@ -52,5 +64,40 @@
 @layer utilities {
   .sr-only-focusable:not(:focus) {
     @apply sr-only;
+  }
+
+  /* Corner-tick accent — evokes a plotted chart's axis crop marks.
+     The recurring structural motif tying pages back to the ADI × CV²
+     quadrant that defines the product's demand classification. */
+  .tick-corners {
+    position: relative;
+  }
+  .tick-corners::before,
+  .tick-corners::after {
+    content: "";
+    position: absolute;
+    width: 10px;
+    height: 10px;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 150ms ease-out;
+  }
+  .tick-corners::before {
+    top: -1px;
+    left: -1px;
+    border-top: 1.5px solid theme("colors.accent.DEFAULT");
+    border-left: 1.5px solid theme("colors.accent.DEFAULT");
+  }
+  .tick-corners::after {
+    bottom: -1px;
+    right: -1px;
+    border-bottom: 1.5px solid theme("colors.accent.DEFAULT");
+    border-right: 1.5px solid theme("colors.accent.DEFAULT");
+  }
+  .tick-corners:hover::before,
+  .tick-corners:hover::after,
+  .tick-corners:focus-within::before,
+  .tick-corners:focus-within::after {
+    opacity: 1;
   }
 }

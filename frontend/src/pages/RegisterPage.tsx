@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { BrandMark } from "@/components/ui/BrandMark";
 import { authService } from "@/services/authService";
 import { useAuthStore } from "@/store/authStore";
 import { ApiError } from "@/services/client";
@@ -57,6 +58,14 @@ export function RegisterPage() {
 
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-sm flex-col justify-center">
+      <Link
+        to="/"
+        className="mb-6 flex items-center justify-center gap-2 font-display font-semibold text-text"
+      >
+        <BrandMark className="h-5 w-5" />
+        Forecasting Platform
+      </Link>
+
       <Card>
         <CardHeader>
           <CardTitle>Create your account</CardTitle>

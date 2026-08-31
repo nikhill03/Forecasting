@@ -10,12 +10,12 @@ interface MetricStatProps {
 export function MetricStat({ label, value, trend, className }: MetricStatProps) {
   return (
     <div className={cn("flex flex-col gap-1", className)}>
-      <span className="text-2xs uppercase tracking-wide text-text-subtle">
+      <span className="text-2xs uppercase tracking-[0.08em] text-text-subtle">
         {label}
       </span>
       <span
         className={cn(
-          "font-mono text-lg font-semibold tabular-nums",
+          "font-mono text-xl font-semibold tracking-tight tabular-nums",
           trend === "up" && "text-success",
           trend === "down" && "text-danger",
           !trend && "text-text",
