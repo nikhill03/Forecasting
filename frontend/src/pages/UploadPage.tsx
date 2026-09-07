@@ -1,6 +1,7 @@
 import { useNavigate } from "react-router-dom";
 import { useEffect } from "react";
 import { FileDropzone } from "@/components/upload/FileDropzone";
+import { SampleDataPanel } from "@/components/upload/SampleDataPanel";
 import { ProgressBar } from "@/components/ui/ProgressBar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useUpload } from "@/hooks/useUpload";
@@ -46,6 +47,10 @@ export function UploadPage() {
           )}
         </CardContent>
       </Card>
+
+      <div className="mt-8">
+        <SampleDataPanel />
+      </div>
     </div>
   );
 }

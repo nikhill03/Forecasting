@@ -116,6 +116,12 @@ export function LandingPage() {
                   </Button>
                 </Link>
               </div>
+
+              {/* /upload sits behind ProtectedRoute, so the most we can offer
+                  a logged-out visitor is the promise of what's waiting. */}
+              <p className="mt-4 text-xs text-text-subtle animate-slide-up">
+                No dataset needed — three sample series are built in.
+              </p>
             </div>
 
             <div className="tick-corners rounded-lg border border-border bg-bg-surface/60 p-5 sm:p-6">
