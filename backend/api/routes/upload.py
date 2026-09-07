@@ -5,11 +5,19 @@ File upload endpoint.
 Replaces: callbacks/file_callbacks.py (Dash-specific upload handling)
 
 Endpoints:
-    POST /api/v1/upload          — upload CSV or Excel file
-    GET  /api/v1/upload/{id}     — get upload metadata (sheets, columns)
+    POST /api/v1/upload              — upload CSV or Excel file
+    GET  /api/v1/upload/samples      — list built-in sample datasets
+    POST /api/v1/upload/sample/{id}  — materialise a sample as a real upload
+    GET  /api/v1/upload/{id}         — get upload metadata (sheets, columns)
     Uploads to S3, persists metadata in PostgreSQL. Falls back to a
     job-scoped local filesystem path (local dev only) when S3 isn't
     configured.
+
+Both POST routes converge on _persist_upload(). That is deliberate: a
+sample must produce an ordinary Upload row indistinguishable from a
+hand-uploaded file, so that forecast.py and forecast_task.py need no
+knowledge of samples at all. If sample handling ever needs a branch inside
+_persist_upload, the design has gone wrong — fix the design.
 """
 
 from __future__ import annotations
@@ -30,7 +38,16 @@ from backend.core.config import Settings, get_settings
 from backend.core.database import get_db
 from backend.core.dependencies import get_current_user_id, parse_uuid_or_404
 from backend.models.db_models import Upload
-from backend.models.schemas import UploadResponse
+from backend.models.schemas import (
+    SampleDatasetResponse,
+    SampleListResponse,
+    UploadResponse,
+)
+from backend.services.sample_datasets import (
+    get_sample,
+    list_samples,
+    load_sample_bytes,
+)
 from utils.forecasting import infer_date_column
 
 router = APIRouter(prefix="/upload", tags=["upload"])
@@ -121,22 +138,28 @@ async def _store_locally(content: bytes, settings: Settings, upload_id: str, fil
     return await asyncio.to_thread(_write)
 
 
-@router.post("", response_model=UploadResponse, status_code=201)
-async def upload_file(
-    file: UploadFile = File(...),
-    settings: Settings = Depends(get_settings),
-    db: AsyncSession = Depends(get_db),
-    user_id: str = Depends(get_current_user_id),
-) -> UploadResponse:
-    content = await file.read()
+async def _persist_upload(
+    *,
+    content: bytes,
+    filename: str,
+    user_id: str,
+    settings: Settings,
+    db: AsyncSession,
+) -> Upload:
+    """Validate, store and record one uploaded dataset.
 
+    The single path shared by POST /upload and POST /upload/sample/{id} —
+    everything from size check through the committed Upload row. Callers
+    supply bytes and a filename and get back a persisted Upload; how those
+    bytes were obtained is not this function's concern, and must not become
+    one.
+    """
     if len(content) > settings.MAX_UPLOAD_SIZE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File exceeds maximum size of {settings.MAX_UPLOAD_SIZE_MB}MB",
         )
 
-    filename = file.filename or "upload.csv"
     _reject_unsafe_filename(filename)
 
     allowed = (".csv", ".xlsx", ".xls")
@@ -192,11 +215,102 @@ async def upload_file(
     await db.commit()
     await db.refresh(upload)
 
+    return upload
+
+
+@router.post("", response_model=UploadResponse, status_code=201)
+async def upload_file(
+    file: UploadFile = File(...),
+    settings: Settings = Depends(get_settings),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> UploadResponse:
+    content = await file.read()
+
+    upload = await _persist_upload(
+        content=content,
+        filename=file.filename or "upload.csv",
+        user_id=user_id,
+        settings=settings,
+        db=db,
+    )
+
     logger.info(
         "upload_complete",
-        upload_id=upload_id,
+        upload_id=upload.id,
         user_id=user_id,
-        rows=sum(row_counts.values()),
+        rows=sum(upload.row_counts.values()),
+    )
+
+    return _to_upload_response(upload)
+
+
+# NOTE: /samples must stay ABOVE GET /{upload_id}. FastAPI matches routes in
+# declaration order, so the reverse would let {upload_id} capture the literal
+# string "samples" and parse_uuid_or_404 would 404 the catalog.
+@router.get("/samples", response_model=SampleListResponse)
+async def list_sample_datasets(
+    user_id: str = Depends(get_current_user_id),
+) -> SampleListResponse:
+    return SampleListResponse(
+        samples=[
+            SampleDatasetResponse(
+                id=sample.id,
+                title=sample.title,
+                description=sample.description,
+                demand_class=sample.demand_class,
+                file_name=sample.file_name,
+                frequency=sample.frequency,
+                row_count=sample.row_count,
+                columns=list(sample.columns),
+            )
+            for sample in list_samples()
+        ]
+    )
+
+
+@router.post("/sample/{sample_id}", response_model=UploadResponse, status_code=201)
+async def create_upload_from_sample(
+    sample_id: str,
+    settings: Settings = Depends(get_settings),
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> UploadResponse:
+    """Copy a built-in sample into the caller's account as a real upload.
+
+    sample_id is untrusted path input and is resolved by dict lookup only —
+    it never reaches a path join. The filename handed to _persist_upload
+    comes from the catalog entry we constructed ourselves.
+    """
+    try:
+        sample = get_sample(sample_id)
+    except KeyError:
+        # Deliberately does not echo sample_id back. The valid set is small,
+        # public and fixed, so naming it is both safer and more useful.
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=(
+                "Unknown sample dataset. Available: "
+                + ", ".join(s.id for s in list_samples())
+            ),
+        )
+
+    content = await asyncio.to_thread(load_sample_bytes, sample.id)
+
+    upload = await _persist_upload(
+        content=content,
+        filename=sample.file_name,
+        user_id=user_id,
+        settings=settings,
+        db=db,
+    )
+
+    logger.info(
+        "sample_upload_created",
+        sample_id=sample.id,
+        upload_id=upload.id,
+        user_id=user_id,
+        rows=sum(upload.row_counts.values()),
     )
 
     return _to_upload_response(upload)

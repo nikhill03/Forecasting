@@ -68,6 +68,28 @@ class UploadResponse(BaseModel):
     uploaded_at : datetime
 
 
+class SampleDatasetResponse(BaseModel):
+    """One built-in onboarding dataset, as advertised by GET /upload/samples.
+
+    Mirrors backend.services.sample_datasets.SampleDataset. `demand_class`
+    is the quadrant the series is expected to classify into — it is what
+    lets the UI show the contrast between samples before a run happens.
+    """
+
+    id           : str
+    title        : str
+    description  : str
+    demand_class : str
+    file_name    : str
+    frequency    : str
+    row_count    : int
+    columns      : List[str]
+
+
+class SampleListResponse(BaseModel):
+    samples : List[SampleDatasetResponse]
+
+
 class ColumnInfo(BaseModel):
     name        : str
     dtype       : str

@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Upload } from "lucide-react";
+import { Upload, Sparkles } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { BrandMark } from "@/components/ui/BrandMark";
@@ -28,12 +28,22 @@ export function DashboardPage() {
               patterns and select the best forecasting model.
             </p>
           </div>
-          <Link to="/upload">
-            <Button size="lg">
-              <Upload className="h-4 w-4" aria-hidden="true" />
-              Upload dataset
-            </Button>
-          </Link>
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <Link to="/upload">
+              <Button size="lg">
+                <Upload className="h-4 w-4" aria-hidden="true" />
+                Upload dataset
+              </Button>
+            </Link>
+            {/* Without this, an account with no CSV to hand has nowhere to
+                go from the first authenticated screen. */}
+            <Link to="/upload">
+              <Button variant="secondary" size="lg">
+                <Sparkles className="h-4 w-4" aria-hidden="true" />
+                Try sample data
+              </Button>
+            </Link>
+          </div>
         </CardContent>
       </Card>
     </div>

@@ -17,6 +17,8 @@ import type {
   MetricResultSchema,
   ProgressResponseSchema,
   QAResponseSchema,
+  SampleDatasetSchema,
+  SampleListResponseSchema,
   SheetResultSchema,
   SuccessResponseSchema,
   TokenResponseSchema,
@@ -36,6 +38,8 @@ export type TokenResponse = z.infer<typeof TokenResponseSchema>;
 export type UserResponse = z.infer<typeof UserResponseSchema>;
 
 export type UploadResponse = z.infer<typeof UploadResponseSchema>;
+export type SampleDataset = z.infer<typeof SampleDatasetSchema>;
+export type SampleListResponse = z.infer<typeof SampleListResponseSchema>;
 
 export type ForecastRequest = z.infer<typeof ForecastRequestSchema>;
 

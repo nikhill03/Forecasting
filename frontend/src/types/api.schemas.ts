@@ -47,6 +47,25 @@ export const UploadResponseSchema = z.object({
   uploaded_at: z.string(),
 });
 
+// Built-in onboarding datasets. `demand_class` is the quadrant the series
+// is expected to classify into — kept as a plain string rather than
+// DemandTypeSchema so adding a sample outside the four canonical types
+// can't break the catalog request for every user.
+export const SampleDatasetSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  description: z.string(),
+  demand_class: z.string(),
+  file_name: z.string(),
+  frequency: z.string(),
+  row_count: z.number(),
+  columns: z.array(z.string()),
+});
+
+export const SampleListResponseSchema = z.object({
+  samples: z.array(SampleDatasetSchema),
+});
+
 // ── forecast: shared enums ───────────────────────────────────────────
 
 export const DemandTypeSchema = z.enum([
