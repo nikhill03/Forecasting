@@ -15,8 +15,10 @@ import asyncio
 import base64
 import json
 import logging
+import math
 import os
 import sys
+import uuid
 from datetime import datetime, timezone
 
 # ── Fix module path so Celery can import services/ and utils/ ─────────
@@ -109,55 +111,181 @@ def _update_job_status_sync(
         raise
 
 
-def _save_model_runs_sync(job_id: str, results: dict):
-    """Persist model metrics to model_runs table synchronously."""
+# ── model_runs row building (F14) ─────────────────────────────────────
+# Kept pure and DB-free so the interesting logic — the champion invariant,
+# the pre-F14 fallback, non-finite handling — is unit-testable without a
+# connection. The DB half below is then a single executemany.
+
+_MODEL_RUN_INSERT = """
+    INSERT INTO model_runs (
+        id, job_id, sheet_name, metric_name, model_name,
+        stage, wmape, mae, mape, rmse, accuracy,
+        composite_score, demand_type, adi, cv2,
+        is_champion, status, error_message
+    ) VALUES (
+        %s, %s, %s, %s, %s,
+        %s, %s, %s, %s, %s, %s,
+        %s, %s, %s, %s,
+        %s, %s, %s
+    )
+"""
+
+
+def _finite(value) -> float | None:
+    """Coerce a score to a JSON- and DB-safe float, or None.
+
+    Both engines use float("inf") as a "no valid points" sentinel. That
+    survives json.dump() as a bare `Infinity` token, which is not valid
+    JSON and makes the browser's JSON.parse throw on the whole results
+    payload. Since F14 persists every model's score — failures included —
+    these sentinels would otherwise become routine.
+    """
+    if value is None:
+        return None
     try:
-        import uuid as _uuid
+        v = float(value)
+    except (TypeError, ValueError):
+        return None
+    return v if math.isfinite(v) else None
+
+
+def _rows_for_metric(
+    job_id: str, sheet_name: str, metric_name: str, metric_data: dict
+) -> list[tuple]:
+    demand      = metric_data.get("demand_profile") or {}
+    best_model  = metric_data.get("best_model")
+    leaderboard = metric_data.get("model_leaderboard") or []
+
+    if not leaderboard:
+        # Pre-F14 pipeline output, or a path that produced no candidates at
+        # all. Degrade to the old single-champion row rather than dropping
+        # the run: a partially-upgraded deployment should lose the
+        # leaderboard, not the result.
+        leaderboard = [{
+            "model_name": best_model,
+            "stage": (
+                "Multivariate" if metric_data.get("is_multivariate") else "Univariate"
+            ),
+            "wmape": metric_data.get("wmape"),
+            "mae": metric_data.get("mae"),
+            "mape": metric_data.get("mape"),
+            "rmse": metric_data.get("rmse"),
+            "accuracy": metric_data.get("accuracy"),
+            "composite_score": metric_data.get("composite_score"),
+            "status": "completed",
+        }]
+
+    # The champion is derived from best_model here rather than trusted from
+    # the entry's own flag, so the leaderboard can never disagree with the
+    # headline the user is shown.
+    champion_seen = False
+    rows: list[tuple] = []
+    for entry in leaderboard:
+        if not isinstance(entry, dict):
+            continue
+        model_name = entry.get("model_name")
+        is_champion = (
+            not champion_seen
+            and best_model is not None
+            and model_name == best_model
+        )
+        champion_seen = champion_seen or is_champion
+
+        rows.append((
+            str(uuid.uuid4()),
+            job_id,
+            sheet_name,
+            metric_name,
+            model_name,
+            entry.get("stage") or "Univariate",
+            _finite(entry.get("wmape")),
+            _finite(entry.get("mae")),
+            _finite(entry.get("mape")),
+            _finite(entry.get("rmse")),
+            _finite(entry.get("accuracy")),
+            _finite(entry.get("composite_score")),
+            demand.get("demand_type"),
+            _finite(demand.get("adi")),
+            _finite(demand.get("cv2")),
+            is_champion,
+            entry.get("status") or "completed",
+            entry.get("error_message"),
+        ))
+
+    # The winner must always have a row, even if the pipeline somehow left
+    # it out of its own leaderboard — the job-history summaries filter on
+    # is_champion, so a group without one disappears from that page.
+    if not champion_seen and best_model is not None:
+        rows.append((
+            str(uuid.uuid4()),
+            job_id,
+            sheet_name,
+            metric_name,
+            best_model,
+            "Multivariate" if metric_data.get("is_multivariate") else "Univariate",
+            _finite(metric_data.get("wmape")),
+            _finite(metric_data.get("mae")),
+            _finite(metric_data.get("mape")),
+            _finite(metric_data.get("rmse")),
+            _finite(metric_data.get("accuracy")),
+            _finite(metric_data.get("composite_score")),
+            demand.get("demand_type"),
+            _finite(demand.get("adi")),
+            _finite(demand.get("cv2")),
+            True,
+            "completed",
+            None,
+        ))
+
+    return rows
+
+
+def _leaderboard_rows(job_id: str, results: dict) -> list[tuple]:
+    """Flatten a results payload into model_runs rows — one per model tried."""
+    rows: list[tuple] = []
+    if not isinstance(results, dict):
+        return rows
+
+    for sheet_name, sheet_data in results.items():
+        if not isinstance(sheet_data, dict):
+            continue
+        # Handle nested {"metrics": {"HUFL": {...}}} structure
+        metrics_dict = sheet_data.get("metrics", sheet_data)
+        if not isinstance(metrics_dict, dict):
+            continue
+        for metric_name, metric_data in metrics_dict.items():
+            if not isinstance(metric_data, dict):
+                continue
+            rows.extend(
+                _rows_for_metric(job_id, sheet_name, metric_name, metric_data)
+            )
+
+    return rows
+
+
+def _save_model_runs_sync(job_id: str, results: dict):
+    """Persist one model_runs row per model tried, synchronously."""
+    rows = _leaderboard_rows(job_id, results)
+    if not rows:
+        logger.warning(f"[{job_id}] no model_runs rows to persist")
+        return
+
+    try:
         conn = _get_sync_conn()
         cur = conn.cursor()
-
-        for sheet_name, sheet_data in results.items():
-            if not isinstance(sheet_data, dict):
-                continue
-            # Handle nested {"metrics": {"HUFL": {...}}} structure
-            metrics_dict = sheet_data.get("metrics", sheet_data)
-            for metric_name, metric_data in metrics_dict.items():
-                if not isinstance(metric_data, dict):
-                    continue
-                demand = metric_data.get("demand_profile") or {}
-                cur.execute("""
-                    INSERT INTO model_runs (
-                        id, job_id, sheet_name, metric_name, model_name,
-                        stage, wmape, mae, mape, rmse, accuracy,
-                        composite_score, demand_type, adi, cv2
-                    ) VALUES (
-                        %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s
-                    )
-                """, (
-                    str(_uuid.uuid4()),
-                    job_id,
-                    sheet_name,
-                    metric_name,
-                    metric_data.get("best_model"),
-                    "Multivariate" if metric_data.get("is_multivariate") else "Univariate",
-                    metric_data.get("wmape"),
-                    metric_data.get("mae"),
-                    metric_data.get("mape"),
-                    metric_data.get("rmse"),
-                    metric_data.get("accuracy"),
-                    metric_data.get("composite_score"),
-                    demand.get("demand_type"),
-                    demand.get("adi"),
-                    demand.get("cv2"),
-                ))
-
+        cur.executemany(_MODEL_RUN_INSERT, rows)
         conn.commit()
         cur.close()
         conn.close()
+        logger.info(f"[{job_id}] persisted {len(rows)} model_runs rows")
     except Exception as e:
-        logger.error(f"model_runs insert failed for job {job_id}: {e}")
+        # The run itself succeeded and its results are already stored; a
+        # failed leaderboard write must not fail the task. Log loudly so a
+        # missing leaderboard is diagnosable rather than mysterious.
+        logger.error(
+            f"model_runs insert failed for job {job_id} ({len(rows)} rows): {e}",
+            exc_info=True,
+        )
 
 
 @celery_app.task(

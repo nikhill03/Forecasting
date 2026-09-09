@@ -324,6 +324,49 @@ def log_experiment(
     except Exception as e:
         print(f"Log Error: {e}")
 
+
+# ── Model leaderboard (F14) ──────────────────────────────────────────
+# The selection loops score every candidate and keep only the winner. These
+# helpers capture the whole field instead, so a user can see the margin the
+# champion won by — and tell a model that lost from one that never finished.
+
+def leaderboard_entry(
+    model_name: str,
+    stage: str = "Univariate",
+    scores: Optional[dict] = None,
+    composite: Optional[float] = None,
+    status: str = "completed",
+    error_message: Optional[str] = None,
+) -> dict:
+    """One competitor's record, in the single shape both engines emit."""
+    scores = scores or {}
+    return {
+        "model_name": model_name,
+        "stage": stage,
+        "wmape": scores.get("wmape"),
+        "mae": scores.get("mae"),
+        "mape": scores.get("mape"),
+        "rmse": scores.get("rmse"),
+        "accuracy": scores.get("accuracy"),
+        "composite_score": composite,
+        "status": status,
+        "error_message": error_message,
+    }
+
+
+def _metric_result(**fields) -> dict:
+    """Build a metric's result dict, guaranteeing the leaderboard key.
+
+    The seven assignment sites in processing_worker carry deliberately
+    different key sets (4 to 16 keys). This helper only ensures
+    model_leaderboard is always present and passes everything else through
+    untouched — normalising the rest would change existing API payloads as
+    a side effect of adding a leaderboard.
+    """
+    fields.setdefault("model_leaderboard", [])
+    return fields
+
+
 def build_records(
     train_series: pd.Series,
     test_series: pd.Series,
@@ -627,10 +670,10 @@ def processing_worker(
 
                     if train_series is None or train_series.empty:
                         _write_debug("Error: Training series empty after sanitization. Skipping.")
-                        sheet_metrics[metric] = {
-                            "best_model": None, "wmape": None, "records": [],
-                            "y_treatment": y_config,
-                        }
+                        sheet_metrics[metric] = _metric_result(
+                            best_model=None, wmape=None, records=[],
+                            y_treatment=y_config,
+                        )
                         sheet_figs[metric] = {}
                         current_progress += 3
                         continue
@@ -657,6 +700,14 @@ def processing_worker(
                     baseline_wmape = None
                     baseline_test_pred = None
 
+                    # Accumulates every model tried for this metric. Declared
+                    # here, before the baseline, because Baseline_SMA is scored
+                    # outside the univariate loop and never competes on
+                    # composite score — it would otherwise be missing from the
+                    # leaderboard even when it goes on to win the revert at the
+                    # end of the metric.
+                    model_leaderboard: list = []
+
                     try:
                         base_res = fe._run_sma(train_series, test_series_raw)
                         b_scores = calculate_performance_metrics(test_series_raw, base_res.predictions_test)
@@ -665,8 +716,17 @@ def processing_worker(
                         log_experiment(sheet, metric, "Univariate", "Baseline_SMA",
                                        b_scores["wmape"], b_scores["mae"], b_scores["mape"],
                                        b_scores["accuracy"])
+                        model_leaderboard.append(
+                            leaderboard_entry("Baseline_SMA", "Univariate", b_scores)
+                        )
                         _write_debug(f"Baseline (SMA) Model Performance: WMAPE={b_scores['wmape']:.2%}")
                     except Exception as base_e:
+                        model_leaderboard.append(
+                            leaderboard_entry(
+                                "Baseline_SMA", "Univariate",
+                                status="failed", error_message=str(base_e),
+                            )
+                        )
                         _write_debug(f"Warning: Baseline SMA failed: {base_e}")
 
                     original_models = fe.models.copy()
@@ -691,14 +751,15 @@ def processing_worker(
                             train_series_raw=train_raw,
                             df_x_clean=df_x_clean,
                         )
-                        sheet_metrics[metric] = {
-                            "best_model": "Baseline_SMA",
-                            "wmape": scores["wmape"], "accuracy": scores["accuracy"],
-                            "adi": adi_val, "cv2": cv2_val, "demand_type": demand_type,
-                            "demand_profile": demand_profile.to_dict(),
-                            "records": records,
-                            "y_treatment": y_config,
-                        }
+                        sheet_metrics[metric] = _metric_result(
+                            best_model="Baseline_SMA",
+                            wmape=scores["wmape"], accuracy=scores["accuracy"],
+                            adi=adi_val, cv2=cv2_val, demand_type=demand_type,
+                            demand_profile=demand_profile.to_dict(),
+                            records=records,
+                            y_treatment=y_config,
+                            model_leaderboard=model_leaderboard,
+                        )
                         metric_completed = True
                         metric_success = True
                         sheet_figs[metric] = {}
@@ -730,9 +791,19 @@ def processing_worker(
 
                                 min_required = max(7, int(0.3 * len(test_series_raw)))
                                 if len(effective_test) < min_required:
-                                    _write_debug(
-                                        f"{model_name}: Skipped — insufficient test overlap "
-                                        f"({len(effective_test)} pts, need {min_required})"
+                                    reason = (
+                                        f"Insufficient test overlap: "
+                                        f"{len(effective_test)} pts, need {min_required}"
+                                    )
+                                    _write_debug(f"{model_name}: Skipped — {reason}")
+                                    # Recorded rather than dropped: a user must
+                                    # be able to tell "lost" from "never ran".
+                                    # No scores exist at this point, only a reason.
+                                    model_leaderboard.append(
+                                        leaderboard_entry(
+                                            model_name, "Univariate",
+                                            status="skipped", error_message=reason,
+                                        )
                                     )
                                     continue
 
@@ -760,13 +831,28 @@ def processing_worker(
                                     rmse_val=scores.get("rmse"),
                                 )
 
+                                model_leaderboard.append(
+                                    leaderboard_entry(
+                                        model_name, "Univariate", scores, comp_score
+                                    )
+                                )
+
                                 if comp_score < best_composite:
                                     best_composite = comp_score
                                     best_wmape = scores["wmape"]
                                     best_name = model_name
                                     best_test_pred = test_pred
 
-                            except Exception:
+                            except Exception as model_e:
+                                # Was a bare `except Exception: continue`, which
+                                # made a crashed model indistinguishable from one
+                                # that simply lost. Bind it and record the reason.
+                                model_leaderboard.append(
+                                    leaderboard_entry(
+                                        model_name, "Univariate",
+                                        status="failed", error_message=str(model_e),
+                                    )
+                                )
                                 continue
 
                         if best_name is None:
@@ -802,6 +888,16 @@ def processing_worker(
 
                         _write_debug(f"Univariate Winner: {best_name} (WMAPE={external_wmape:.2%})")
 
+                    except InterruptedError:
+                        # A user stop is raised inside the model loop above but
+                        # outside its per-model try, so it lands here. Without
+                        # this re-raise the generic handler below swallows it
+                        # and reports the stopped run as a Baseline_SMA
+                        # "success" — a fabricated result for a job the user
+                        # explicitly cancelled. Let it reach processing_worker's
+                        # own `except InterruptedError`.
+                        raise
+
                     except Exception as model_err:
                         _write_debug(f"Error: Univariate selection failed ({model_err}). Reverting to Baseline.")
                         train_model_output = fe.run_fallback_model(train_series)
@@ -820,17 +916,18 @@ def processing_worker(
                             test_pred_series=test_pred_series, forecast_series=forecast_series,
                             train_series_raw=train_raw, df_x_clean=df_x_clean,
                         )
-                        sheet_metrics[metric] = {
-                            "best_model": "Baseline_SMA",
-                            "wmape": scores["wmape"], "accuracy": scores["accuracy"],
-                            "mae": scores["mae"], "mape": scores["mape"],
-                            "rmse": scores.get("rmse"),
-                            "adi": adi_val, "cv2": cv2_val,
-                            "demand_type": demand_type,
-                            "demand_profile": demand_profile.to_dict(),
-                            "records": records,
-                            "y_treatment": y_config,
-                        }
+                        sheet_metrics[metric] = _metric_result(
+                            best_model="Baseline_SMA",
+                            wmape=scores["wmape"], accuracy=scores["accuracy"],
+                            mae=scores["mae"], mape=scores["mape"],
+                            rmse=scores.get("rmse"),
+                            adi=adi_val, cv2=cv2_val,
+                            demand_type=demand_type,
+                            demand_profile=demand_profile.to_dict(),
+                            records=records,
+                            y_treatment=y_config,
+                            model_leaderboard=model_leaderboard,
+                        )
                         metric_completed = True
                         metric_success = True
                         sheet_figs[metric] = {}
@@ -853,17 +950,46 @@ def processing_worker(
 
                     if apply_multivariate:
                         mv = MultivariateEngine(selected_regions=selected_regions)
-                        mv_res = mv.run_multivariate(
-                            train_series, test_series_clean, test_series_raw,
-                            X_external_train=X_train_ext,
-                            X_external_test=X_test_ext,
-                            debug=True,
-                            logger_func=lambda name, w, m, mp, acc: log_experiment(
-                                sheet, metric, "Multivariate", name, w, m, mp, acc
-                            ),
-                            horizon=safe_horizon,
-                            test_size=test_window,
-                        )
+                        # run_multivariate raises RuntimeError("All multivariate
+                        # models failed."). Unguarded, that escaped to the
+                        # metric-level handler, which overwrites a perfectly
+                        # good univariate result with an empty dict — a failed
+                        # *challenger* must not destroy the incumbent.
+                        try:
+                            mv_res = mv.run_multivariate(
+                                train_series, test_series_clean, test_series_raw,
+                                X_external_train=X_train_ext,
+                                X_external_test=X_test_ext,
+                                debug=True,
+                                logger_func=lambda name, w, m, mp, acc: log_experiment(
+                                    sheet, metric, "Multivariate", name, w, m, mp, acc
+                                ),
+                                horizon=safe_horizon,
+                                test_size=test_window,
+                            )
+                        except InterruptedError:
+                            raise
+                        except Exception as mv_err:
+                            _write_debug(
+                                f"Warning: Multivariate failed ({mv_err}). "
+                                f"Keeping univariate winner {best_name}."
+                            )
+                            mv_res = None
+
+                    if apply_multivariate and mv_res is not None:
+                        # Fold every multivariate candidate into the same
+                        # leaderboard, whether or not the challenger wins.
+                        for mv_name, mv_scores in (
+                            mv_res.get("all_model_results") or {}
+                        ).items():
+                            model_leaderboard.append(
+                                leaderboard_entry(
+                                    mv_name, "Multivariate", mv_scores,
+                                    mv_scores.get("composite_score"),
+                                    status=mv_scores.get("status") or "completed",
+                                    error_message=mv_scores.get("error_message"),
+                                )
+                            )
 
                         feature_importance_dict = {}
                         if "best_model_object" in mv_res:
@@ -891,9 +1017,15 @@ def processing_worker(
                             except Exception as e:
                                 _write_debug(f"Feature Importance Error: {e}")
 
+                        # `:.2%` on a None wmape raises TypeError here, which
+                        # would escape to the metric-level handler and discard
+                        # the univariate result — the same failure the guard
+                        # above exists to prevent, via a different route. The
+                        # very next line already treats None as a valid case.
+                        _mv_wmape = mv_res.get("wmape")
                         _write_debug(
                             f"Multivariate Best: {mv_res.get('best_model')} | "
-                            f"WMAPE={mv_res.get('wmape'):.2%}"
+                            f"WMAPE={f'{_mv_wmape:.2%}' if _mv_wmape is not None else 'n/a'}"
                         )
 
                         uni_score = external_wmape if external_wmape is not None else 1.0
@@ -925,24 +1057,25 @@ def processing_worker(
                                 train_series_raw=train_raw, df_x_clean=df_x_clean,
                             )
                             metric_finalized = True
-                            sheet_metrics[metric] = {
-                                "best_model": best_name,
-                                "wmape": scores["wmape"], "mae": scores["mae"],
-                                "mape": scores["mape"], "rmse": scores.get("rmse"),
-                                "accuracy": scores["accuracy"],
-                                "composite_score": scores.get("composite_score"),
-                                "adi": adi_val, "cv2": cv2_val,
-                                "demand_type": demand_type,
-                                "demand_profile": demand_profile.to_dict(),
-                                "records": records,
-                                "x_vars": selected_x_cols,
-                                "y_treatment": y_config,
-                                "feature_importance": feature_importance_dict,
-                                "forecast_bias": float(
+                            sheet_metrics[metric] = _metric_result(
+                                best_model=best_name,
+                                wmape=scores["wmape"], mae=scores["mae"],
+                                mape=scores["mape"], rmse=scores.get("rmse"),
+                                accuracy=scores["accuracy"],
+                                composite_score=scores.get("composite_score"),
+                                adi=adi_val, cv2=cv2_val,
+                                demand_type=demand_type,
+                                demand_profile=demand_profile.to_dict(),
+                                records=records,
+                                x_vars=selected_x_cols,
+                                y_treatment=y_config,
+                                feature_importance=feature_importance_dict,
+                                forecast_bias=float(
                                     (test_series_raw.sum() - test_pred_series.sum())
                                     / (test_series_raw.sum() + 1e-6)
                                 ),
-                            }
+                                model_leaderboard=model_leaderboard,
+                            )
                             metric_completed = True
                             metric_success = True
                         else:
@@ -983,23 +1116,30 @@ def processing_worker(
                             test_pred_series=test_pred_series, forecast_series=forecast_series,
                             train_series_raw=train_raw, df_x_clean=df_x_clean,
                         )
-                        sheet_metrics[metric] = {
-                            "best_model": best_name,
-                            "wmape": external_wmape, "mae": val_mae,
-                            "mape": val_mape, "rmse": val_rmse,
-                            "adi": adi_val, "cv2": cv2_val,
-                            "demand_type": demand_type,
-                            "demand_profile": demand_profile.to_dict(),
-                            "accuracy": final_accuracy,
-                            "records": records,
-                            "y_treatment": y_config,
-                        }
+                        sheet_metrics[metric] = _metric_result(
+                            best_model=best_name,
+                            wmape=external_wmape, mae=val_mae,
+                            mape=val_mape, rmse=val_rmse,
+                            adi=adi_val, cv2=cv2_val,
+                            demand_type=demand_type,
+                            demand_profile=demand_profile.to_dict(),
+                            accuracy=final_accuracy,
+                            records=records,
+                            y_treatment=y_config,
+                            model_leaderboard=model_leaderboard,
+                        )
                         metric_completed = True
                         metric_success = True
 
                     # Baseline comparison
                     if baseline_wmape is not None and metric_success and metric in sheet_metrics:
-                        current_best_wmape = sheet_metrics[metric].get("wmape") or float("inf")
+                        # `or float("inf")` treated a WMAPE of exactly 0.0 as
+                        # missing, so a perfect model always lost to the
+                        # baseline. Only None means "no score".
+                        _current_wmape = sheet_metrics[metric].get("wmape")
+                        current_best_wmape = (
+                            _current_wmape if _current_wmape is not None else float("inf")
+                        )
                         if baseline_wmape < current_best_wmape:
                             _write_debug("Notice: Baseline (SMA) outperformed advanced models. Reverting.")
                             final_base_res = fe._run_sma(full_clean_series, None)
@@ -1010,16 +1150,17 @@ def processing_worker(
                                 forecast_series=final_base_res.forecast if final_base_res else forecast_series,
                                 train_series_raw=train_raw, df_x_clean=df_x_clean,
                             )
-                            sheet_metrics[metric] = {
-                                "best_model": "Baseline_SMA",
-                                "wmape": base_scores["wmape"], "mae": base_scores["mae"],
-                                "mape": base_scores["mape"], "accuracy": base_scores["accuracy"],
-                                "adi": adi_val, "cv2": cv2_val,
-                                "demand_type": demand_type,
-                                "demand_profile": demand_profile.to_dict(),
-                                "records": records,
-                                "y_treatment": y_config,
-                            }
+                            sheet_metrics[metric] = _metric_result(
+                                best_model="Baseline_SMA",
+                                wmape=base_scores["wmape"], mae=base_scores["mae"],
+                                mape=base_scores["mape"], accuracy=base_scores["accuracy"],
+                                adi=adi_val, cv2=cv2_val,
+                                demand_type=demand_type,
+                                demand_profile=demand_profile.to_dict(),
+                                records=records,
+                                y_treatment=y_config,
+                                model_leaderboard=model_leaderboard,
+                            )
                             best_name = "Baseline_SMA"
                             if final_base_res:
                                 forecast_series = final_base_res.forecast
@@ -1060,10 +1201,11 @@ def processing_worker(
                     _write_debug(f"Error: Metric-level exception for {sheet}/{metric}: {metric_exc}")
                     with open(TRACEBACK_FILE, "w") as fh:
                         fh.write(traceback.format_exc())
-                    sheet_metrics[metric] = {
-                        "best_model": None, "wmape": None, "records": [],
-                        "y_treatment": y_config if 'y_config' in locals() else {},
-                    }
+                    sheet_metrics[metric] = _metric_result(
+                        best_model=None, wmape=None, records=[],
+                        y_treatment=y_config if 'y_config' in locals() else {},
+                        model_leaderboard=model_leaderboard if 'model_leaderboard' in locals() else [],
+                    )
                     metric_completed = True
                     metric_success = False
                     sheet_figs[metric] = {}

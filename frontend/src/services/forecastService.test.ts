@@ -69,6 +69,7 @@ describe("forecastService.getJob", () => {
               demand_profile: null,
               feature_importance: null,
               forecast_bias: 0.5,
+              model_leaderboard: [],
               records: [],
             },
           },
