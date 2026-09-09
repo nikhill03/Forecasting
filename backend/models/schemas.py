@@ -137,15 +137,25 @@ class DemandProfileSchema(BaseModel):
 
 
 class ModelRunResult(BaseModel):
+    """One competitor in a metric's leaderboard (F14).
+
+    A run trains many models and scores each; before F14 only the winner
+    survived. `status` is what separates a model that lost from one that
+    never produced a score, so a scoreless row is never ambiguous.
+    """
+
     model_name    : str
     stage         : str          # "Univariate" | "Multivariate"
-    wmape         : Optional[float]
-    mae           : Optional[float]
-    mape          : Optional[float]
-    rmse          : Optional[float]
-    accuracy      : Optional[float]
-    composite_score: Optional[float]
-    demand_profile : Optional[DemandProfileSchema]
+    wmape         : Optional[float] = None
+    mae           : Optional[float] = None
+    mape          : Optional[float] = None
+    rmse          : Optional[float] = None
+    accuracy      : Optional[float] = None
+    composite_score: Optional[float] = None
+    demand_profile : Optional[DemandProfileSchema] = None
+    is_champion   : bool = False
+    status        : str = "completed"   # completed | failed | skipped
+    error_message : Optional[str] = None
 
 
 class ForecastRecord(BaseModel):
@@ -169,6 +179,11 @@ class MetricResult(BaseModel):
     demand_profile: Optional[DemandProfileSchema] = None
     feature_importance: Optional[Dict[str, float]] = None
     forecast_bias: Optional[float] = None
+    # Every model tried for this metric, champion included. Rides along on
+    # the existing job fetch so the results page needs no second request.
+    # Pydantic v2 ignores extra keys, so this field is what stops the
+    # pipeline's model_leaderboard from being silently dropped here.
+    model_leaderboard: List[ModelRunResult] = []
     records: List[ForecastRecord] = []
 
 

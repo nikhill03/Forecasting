@@ -4,6 +4,7 @@ import { MetricStat } from "@/components/ui/MetricStat";
 import { DemandBadge } from "@/components/ui/DemandBadge";
 import { ForecastChart } from "@/components/charts/ForecastChart";
 import { ActionCenter } from "@/components/forecast/ActionCenter";
+import { ModelLeaderboard } from "@/components/forecast/ModelLeaderboard";
 import { UnderstandabilitySection } from "@/components/forecast/UnderstandabilitySection";
 import { formatWmape, formatPercent, formatNumber } from "@/lib/format";
 import type { ForecastRecord, MetricResult } from "@/types/api";
@@ -62,6 +63,8 @@ export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardP
             />
           )}
         </div>
+
+        <ModelLeaderboard models={metric.model_leaderboard} />
 
         <UnderstandabilitySection
           jobId={jobId}

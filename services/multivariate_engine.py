@@ -451,6 +451,9 @@ class MultivariateEngine:
                 if test_series_raw is not None else test_series_clean.loc[X_test.index]
 
         results = {}
+        # Candidates that raised, kept separate from `results` so they are
+        # reported in the leaderboard but never eligible to win.
+        failed_models: dict[str, str] = {}
         for name in model_names:
             try:
                 is_booster  = name in ("LightGBM", "XGBoost", "HistGB")
@@ -498,15 +501,25 @@ class MultivariateEngine:
                     if logger_func:
                         logger_func(name, w_score, m_score, mp_score, acc_score)
 
+                    # mae/mape/accuracy were computed above and then dropped;
+                    # they are kept now so the leaderboard can show the full
+                    # score set for multivariate candidates, not just WMAPE.
                     results[name] = {
                         "model"     : final_model,
                         "wmape"     : w_score,
+                        "mae"       : m_score,
+                        "mape"      : mp_score,
                         "rmse"      : r_score,
+                        "accuracy"  : acc_score,
                         "test_pred" : pred_series,
                         "is_booster": is_booster,
                     }
             except Exception as e:
                 logger.warning(f"[MV] {name} failed: {e}")
+                # Recorded rather than dropped, so a model that crashed is
+                # distinguishable from one that merely lost. Kept out of
+                # `results` so it can never be selected as the champion.
+                failed_models[name] = str(e)
                 continue
 
         if not results:
@@ -632,5 +645,24 @@ class MultivariateEngine:
             "rmse"               : final_rmse,
             "accuracy"           : round(final_acc, 2),
             "top_features"       : top_feats,
-            "all_model_results"  : {k: {"wmape": v["wmape"]} for k, v in results.items()},
+            # Full score set per candidate, plus the ones that crashed.
+            # Consumed by processing_engine to build the model leaderboard —
+            # before F14 this carried WMAPE only and nothing read it at all.
+            "all_model_results": {
+                **{
+                    name: {
+                        "wmape"    : info.get("wmape"),
+                        "mae"      : info.get("mae"),
+                        "mape"     : info.get("mape"),
+                        "rmse"     : info.get("rmse"),
+                        "accuracy" : info.get("accuracy"),
+                        "status"   : "completed",
+                    }
+                    for name, info in results.items()
+                },
+                **{
+                    name: {"status": "failed", "error_message": err}
+                    for name, err in failed_models.items()
+                },
+            },
         }

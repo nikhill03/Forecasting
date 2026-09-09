@@ -304,9 +304,16 @@ async def list_jobs(
     metrics_by_job: Dict[str, list[ForecastJobMetricSummary]] = {}
     job_ids = [j.id for j in jobs]
     if job_ids:
+        # Champions only. Since F14 this table holds one row per model
+        # *tried*, not one per metric — without the filter each job would
+        # report ~10 "metrics" per metric here. Filtered in SQL rather than
+        # in Python because this already IN-queries a whole page of jobs.
         runs_result = await db.execute(
             select(ModelRun)
-            .where(ModelRun.job_id.in_(job_ids))
+            .where(
+                ModelRun.job_id.in_(job_ids),
+                ModelRun.is_champion.is_(True),
+            )
             .order_by(ModelRun.created_at.asc())
         )
         for run in runs_result.scalars().all():

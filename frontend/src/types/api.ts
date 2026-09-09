@@ -15,6 +15,7 @@ import type {
   ForecastRequestSchema,
   JobStatusSchema,
   MetricResultSchema,
+  ModelRunResultSchema,
   ProgressResponseSchema,
   QAResponseSchema,
   SampleDatasetSchema,
@@ -47,6 +48,7 @@ export type DemandType = z.infer<typeof DemandTypeSchema>;
 export type DemandProfile = z.infer<typeof DemandProfileSchema>;
 export type ForecastRecord = z.infer<typeof ForecastRecordSchema>;
 export type MetricResult = z.infer<typeof MetricResultSchema>;
+export type ModelRunResult = z.infer<typeof ModelRunResultSchema>;
 export type SheetResult = z.infer<typeof SheetResultSchema>;
 
 export type JobStatus = z.infer<typeof JobStatusSchema>;

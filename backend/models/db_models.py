@@ -21,7 +21,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
+from sqlalchemy.sql import false, func
 
 from backend.core.database import Base
 
@@ -163,6 +163,26 @@ class ModelRun(Base):
     demand_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     adi: Mapped[float | None] = mapped_column(Float, nullable=True)
     cv2: Mapped[float | None] = mapped_column(Float, nullable=True)
+
+    # ── Leaderboard columns (F14) ─────────────────────────────────────
+    # Before F14 this table held one row per metric — the winner only. It
+    # now holds one row per model *tried*, so a reader needs to know which
+    # row won and whether a scoreless row lost or never finished.
+    #
+    # server_default is declared here as well as in the migration so the
+    # two cannot drift: conftest.py builds the test schema with
+    # Base.metadata.create_all() and never runs alembic, so nothing in the
+    # suite would catch a mismatch.
+    is_champion: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=false()
+    )
+    # "completed" | "failed" | "skipped" — a failed model is data, not an
+    # absence. Distinguishes "didn't win" from "didn't finish".
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="completed", server_default="completed"
+    )
+    error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

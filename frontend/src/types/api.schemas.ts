@@ -137,6 +137,23 @@ export const ForecastRecordSchema = z.object({
   Forecast: z.number().nullable(),
 });
 
+// One competitor in a metric's leaderboard. `status` separates a model that
+// lost from one that never produced a score, so an empty score row is never
+// ambiguous.
+export const ModelRunResultSchema = z.object({
+  model_name: z.string(),
+  stage: z.string(),
+  wmape: z.number().nullable(),
+  mae: z.number().nullable(),
+  mape: z.number().nullable(),
+  rmse: z.number().nullable(),
+  accuracy: z.number().nullable(),
+  composite_score: z.number().nullable(),
+  is_champion: z.boolean(),
+  status: z.string(),
+  error_message: z.string().nullable(),
+});
+
 export const MetricResultSchema = z.object({
   // Optional[str] on the backend (backend/models/schemas.py) — can be null
   // for a partial/failed model run. See ResultsPage.tsx for the call site
@@ -152,6 +169,12 @@ export const MetricResultSchema = z.object({
   demand_profile: DemandProfileSchema.nullable(),
   feature_importance: z.record(z.number()).nullable(),
   forecast_bias: z.number().nullable(),
+  // Every model tried for this metric. Rides along on the existing job fetch,
+  // so the results page needs no second request. Always present: Pydantic
+  // fills it with [] for runs that predate F14. Not .default() — that would
+  // make the schema's input type diverge from its output and break
+  // parseOrThrow's z.ZodType<T> signature.
+  model_leaderboard: z.array(ModelRunResultSchema),
   records: z.array(ForecastRecordSchema),
 });
 
