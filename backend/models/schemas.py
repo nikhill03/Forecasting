@@ -259,6 +259,103 @@ class RenameJobRequest(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════
+# DASHBOARD SCHEMAS (F15)
+# ══════════════════════════════════════════════════════════════════
+
+class StatusCounts(BaseModel):
+    success : int = 0
+    failed  : int = 0
+    stopped : int = 0
+    running : int = 0
+    pending : int = 0
+
+
+class RecentRun(BaseModel):
+    """One of the user's newest jobs, any status.
+
+    `champion_model` is the winner of the run's first metric (by sheet, then
+    metric name); `metric_count` says how many metrics the run has, so the UI
+    can show "Prophet +2" rather than pretend a multi-metric run had one winner.
+    """
+
+    job_id         : str
+    name           : Optional[str] = None
+    file_name      : Optional[str] = None
+    status         : str
+    created_at     : datetime
+    champion_model : Optional[str] = None
+    metric_count   : int = 0
+    wmape          : Optional[float] = None
+
+
+class TrendPoint(BaseModel):
+    job_id     : str
+    created_at : datetime
+    wmape      : float
+
+
+class DemandMix(BaseModel):
+    """Distinct series per demand quadrant. Keys match DemandType so the
+    frontend can index by it directly."""
+
+    Smooth       : int = 0
+    Erratic      : int = 0
+    Intermittent : int = 0
+    Lumpy        : int = 0
+    unclassified : int = 0
+
+
+class ActiveRun(BaseModel):
+    """A pending or running job. Live progress is not stored here — the
+    database only records progress at start and finish — so the client polls
+    GET /forecast/{job_id}/progress per row."""
+
+    job_id     : str
+    name       : Optional[str] = None
+    file_name  : Optional[str] = None
+    status     : str
+    created_at : datetime
+    started_at : Optional[datetime] = None
+
+
+class RunDuration(BaseModel):
+    job_id           : str
+    name             : Optional[str] = None
+    file_name        : Optional[str] = None
+    created_at       : datetime
+    duration_seconds : float
+
+
+class ModelWin(BaseModel):
+    model_name : str
+    wins       : int
+
+
+class DashboardSummary(BaseModel):
+    """Everything the dashboard shows, from one owner-scoped request.
+
+    success_rate       = success / (success + failed); None when nothing has
+                         finished. Stopped, pending and running are excluded.
+    median_wmape       = median of per-run WMAPE over accuracy_trend's window.
+    median_run_seconds = median duration of the newest successful runs.
+    model_wins         = champion counts per model, every run-metric counted.
+    """
+
+    total_runs         : int
+    status_counts      : StatusCounts
+    success_rate       : Optional[float] = None
+    median_wmape       : Optional[float] = None
+    last_run_at        : Optional[datetime] = None
+    recent_runs        : List[RecentRun] = []
+    accuracy_trend     : List[TrendPoint] = []
+    demand_mix         : DemandMix
+    active_runs        : List[ActiveRun] = []
+    median_run_seconds : Optional[float] = None
+    slowest_runs       : List[RunDuration] = []
+    model_wins         : List[ModelWin] = []
+
+
+# ══════════════════════════════════════════════════════════════════
 # AI ACTION CENTER SCHEMAS (feature-update.md Feature 2)
 # ══════════════════════════════════════════════════════════════════
 

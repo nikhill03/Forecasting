@@ -21,6 +21,35 @@ export function formatPercent(
   return `${value.toFixed(decimals)}%`;
 }
 
+// For values stored as a 0–1 fraction (WMAPE, success rate). The null check
+// is explicit because `null * 100` is 0 in JavaScript — multiplying before
+// calling formatPercent would render a missing value as "0%".
+export function formatFractionAsPercent(
+  value: number | null | undefined,
+  decimals = 1,
+): string {
+  if (value === null || value === undefined) {
+    return "—";
+  }
+  return formatPercent(value * 100, decimals);
+}
+
+// "45s", "3m 57s", "2m", "1h 2m". Seconds are dropped once a duration reaches
+// an hour — at that scale they're noise.
+export function formatDuration(seconds: number | null | undefined): string {
+  if (seconds === null || seconds === undefined || Number.isNaN(seconds)) {
+    return "—";
+  }
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const secs = total % 60;
+
+  if (hours > 0) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  if (minutes > 0) return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`;
+  return `${secs}s`;
+}
+
 export function formatWmape(value: number | null | undefined): string {
   if (value === null || value === undefined || Number.isNaN(value)) {
     return "—";

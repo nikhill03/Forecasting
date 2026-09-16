@@ -1,8 +1,26 @@
 import { cn } from "@/lib/utils";
+import type { DemandType } from "@/types/api";
 
 interface DemandQuadrantProps {
   className?: string;
+  // The user's own series per quadrant. Omit it for the landing page's
+  // illustration. When supplied, the counts replace the illustrative dots,
+  // which would otherwise suggest data points that don't exist.
+  counts?: Partial<Record<DemandType, number>>;
 }
+
+const COUNT_ORDER: DemandType[] = ["Smooth", "Erratic", "Intermittent", "Lumpy"];
+
+// Quadrant centres within the plot area (x 20–330, y 10–240, split at 170/128).
+const COUNT_POSITIONS: Record<DemandType, { x: number; y: number }> = {
+  Smooth: { x: 95, y: 180 },
+  Erratic: { x: 95, y: 72 },
+  Intermittent: { x: 250, y: 180 },
+  Lumpy: { x: 250, y: 72 },
+};
+
+const ILLUSTRATION_LABEL =
+  "Scatter chart showing demand series classified into four quadrants by order interval and demand variability: Smooth, Erratic, Intermittent and Lumpy";
 
 interface ScatterPoint {
   x: number;
@@ -47,15 +65,21 @@ const GROUPS: { points: ScatterPoint[]; colorClass: string }[] = [
  * visual thesis: this is what the platform actually does to every
  * series it's handed, before it ever picks a model.
  */
-export function DemandQuadrant({ className }: DemandQuadrantProps) {
+export function DemandQuadrant({ className, counts }: DemandQuadrantProps) {
   let dotIndex = 0;
+
+  const label = counts
+    ? `Your series by demand pattern: ${COUNT_ORDER.map(
+        (type) => `${type} ${counts[type] ?? 0}`,
+      ).join(", ")}`
+    : ILLUSTRATION_LABEL;
 
   return (
     <svg
       viewBox="0 0 340 260"
       fill="none"
       role="img"
-      aria-label="Scatter chart showing demand series classified into four quadrants by order interval and demand variability: Smooth, Erratic, Intermittent and Lumpy"
+      aria-label={label}
       className={cn("w-full", className)}
     >
       <line x1="170" y1="10" x2="170" y2="240" className="stroke-border" strokeWidth="1" strokeDasharray="3 4" />
@@ -76,7 +100,38 @@ export function DemandQuadrant({ className }: DemandQuadrantProps) {
       <text x="234" y="226" className="fill-demand-intermittent font-display text-[11px] font-semibold tracking-wide">INTERMITTENT</text>
       <text x="270" y="36" className="fill-demand-lumpy font-display text-[11px] font-semibold tracking-wide">LUMPY</text>
 
-      {GROUPS.map((group) =>
+      {counts
+        ? COUNT_ORDER.map((type) => {
+            const n = counts[type] ?? 0;
+            const pos = COUNT_POSITIONS[type];
+            // Numbers wear text tokens; the coloured quadrant label beside
+            // them carries identity. Empty quadrants recede.
+            return (
+              <g key={type}>
+                <text
+                  x={pos.x}
+                  y={pos.y}
+                  textAnchor="middle"
+                  dominantBaseline="central"
+                  className={cn(
+                    "font-display text-[30px] font-semibold",
+                    n > 0 ? "fill-text" : "fill-text-subtle",
+                  )}
+                >
+                  {n}
+                </text>
+                <text
+                  x={pos.x}
+                  y={pos.y + 24}
+                  textAnchor="middle"
+                  className="fill-text-subtle font-mono text-[9px] uppercase tracking-wider"
+                >
+                  series
+                </text>
+              </g>
+            );
+          })
+        : GROUPS.map((group) =>
         group.points.map((p) => {
           const delay = dotIndex * 70;
           dotIndex += 1;

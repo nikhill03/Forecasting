@@ -21,6 +21,7 @@
  *    post-login half).
  */
 import { render, screen, waitFor, act } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, afterEach } from "vitest";
 import { App } from "./App";
 import { useAuthStore } from "@/store/authStore";
@@ -28,6 +29,21 @@ import { mockUser } from "@/test/handlers";
 import { resetAuthStore, seedAuthenticatedState } from "@/test/authTestUtils";
 
 const PROTECTED_PATHS = ["/upload", "/configure", "/running", "/results"];
+
+// App.tsx has no QueryClientProvider (main.tsx supplies it), and a signed-in
+// visitor lands on /dashboard, which queries the API. So each render brings
+// its own client. renderWithProviders can't be used here: its MemoryRouter
+// would nest inside App's own BrowserRouter.
+function renderApp() {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  return render(
+    <QueryClientProvider client={client}>
+      <App />
+    </QueryClientProvider>,
+  );
+}
 
 function navigateTo(path: string): void {
   act(() => {
@@ -47,7 +63,7 @@ describe("App routing — auth guard", () => {
       resetAuthStore();
       navigateTo(path);
 
-      render(<App />);
+      renderApp();
 
       await waitFor(() => {
         expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
@@ -64,7 +80,7 @@ describe("App routing — auth guard", () => {
       resetAuthStore();
       navigateTo(path);
 
-      render(<App />);
+      renderApp();
 
       await waitFor(() => {
         expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
@@ -83,7 +99,7 @@ describe("App routing — auth guard", () => {
     resetAuthStore();
     navigateTo("/login");
 
-    render(<App />);
+    renderApp();
 
     await waitFor(() => {
       expect(screen.getByLabelText(/email/i)).toBeInTheDocument();
@@ -96,7 +112,7 @@ describe("App routing — auth guard", () => {
     resetAuthStore();
     navigateTo("/");
 
-    render(<App />);
+    renderApp();
 
     await waitFor(() => {
       expect(
@@ -111,7 +127,7 @@ describe("App routing — auth guard", () => {
     seedAuthenticatedState({ user: mockUser });
     navigateTo("/");
 
-    render(<App />);
+    renderApp();
 
     await waitFor(() => {
       expect(screen.getByLabelText("Main navigation")).toBeInTheDocument();
@@ -136,7 +152,7 @@ describe("App auth hydration on mount (page reload)", () => {
     });
     navigateTo("/");
 
-    render(<App />);
+    renderApp();
 
     await waitFor(() => {
       expect(screen.getByText(mockUser.full_name)).toBeInTheDocument();
