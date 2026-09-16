@@ -22,7 +22,7 @@ from slowapi.errors import RateLimitExceeded
 
 from backend.core.config import settings
 from backend.core.dependencies import limiter
-from backend.api.routes import auth, forecast, upload
+from backend.api.routes import auth, dashboard, forecast, upload
 
 # ── Structured logging setup ─────────────────────────────────────
 structlog.configure(
@@ -143,9 +143,10 @@ def create_app() -> FastAPI:
     # ── Register routers ──────────────────────────────────────────
     prefix = settings.API_V1_PREFIX  # /api/v1
 
-    app.include_router(auth.router,     prefix=prefix)
-    app.include_router(upload.router,   prefix=prefix)
-    app.include_router(forecast.router, prefix=prefix)
+    app.include_router(auth.router,      prefix=prefix)
+    app.include_router(upload.router,    prefix=prefix)
+    app.include_router(forecast.router,  prefix=prefix)
+    app.include_router(dashboard.router, prefix=prefix)
 
     return app
 

@@ -1,7 +1,10 @@
 import type { z } from "zod";
 import type {
   ActionCenterStateSchema,
+  ActiveRunSchema,
   ApiValidationErrorSchema,
+  DashboardSummarySchema,
+  DemandMixSchema,
   DemandProfileSchema,
   DemandTypeSchema,
   ErrorResponseSchema,
@@ -16,13 +19,18 @@ import type {
   JobStatusSchema,
   MetricResultSchema,
   ModelRunResultSchema,
+  ModelWinSchema,
   ProgressResponseSchema,
   QAResponseSchema,
+  RecentRunSchema,
+  RunDurationSchema,
   SampleDatasetSchema,
   SampleListResponseSchema,
   SheetResultSchema,
+  StatusCountsSchema,
   SuccessResponseSchema,
   TokenResponseSchema,
+  TrendPointSchema,
   UploadResponseSchema,
   UserLoginRequestSchema,
   UserRegisterRequestSchema,
@@ -70,6 +78,15 @@ export type ActionCenterState = z.infer<typeof ActionCenterStateSchema>;
 export type ExplanationResponse = z.infer<typeof ExplanationResponseSchema>;
 
 export type QAResponse = z.infer<typeof QAResponseSchema>;
+
+export type StatusCounts = z.infer<typeof StatusCountsSchema>;
+export type RecentRun = z.infer<typeof RecentRunSchema>;
+export type TrendPoint = z.infer<typeof TrendPointSchema>;
+export type DemandMix = z.infer<typeof DemandMixSchema>;
+export type ActiveRun = z.infer<typeof ActiveRunSchema>;
+export type RunDuration = z.infer<typeof RunDurationSchema>;
+export type ModelWin = z.infer<typeof ModelWinSchema>;
+export type DashboardSummary = z.infer<typeof DashboardSummarySchema>;
 
 export type SuccessResponse = z.infer<typeof SuccessResponseSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;

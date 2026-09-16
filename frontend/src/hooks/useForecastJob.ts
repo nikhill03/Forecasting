@@ -5,7 +5,7 @@ import { useForecastStore } from "@/store/forecastStore";
 import type { ForecastRequest } from "@/types/api";
 import { ApiError } from "@/services/client";
 
-const TERMINAL_STATES = new Set(["success", "failed", "stopped"]);
+export const TERMINAL_STATES = new Set(["success", "failed", "stopped"]);
 
 const FAST_INTERVAL_MS = 2000;
 const SLOW_INTERVAL_MS = 5000;

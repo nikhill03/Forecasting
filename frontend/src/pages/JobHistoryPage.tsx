@@ -7,16 +7,8 @@ import { Button } from "@/components/ui/Button";
 import { forecastService } from "@/services/forecastService";
 import { useForecastStore } from "@/store/forecastStore";
 import { formatPercent, formatRelativeTime, formatDate } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import type { ForecastJobSummary, JobStatus } from "@/types/api";
-
-const STATUS_STYLES: Record<JobStatus, string> = {
-  success: "bg-success/10 text-success",
-  failed: "bg-danger/10 text-danger",
-  running: "bg-accent/10 text-accent",
-  pending: "bg-info/10 text-info",
-  stopped: "bg-bg-raised text-text-muted",
-};
+import { StatusBadge } from "@/components/ui/StatusBadge";
+import type { ForecastJobSummary } from "@/types/api";
 
 interface JobHistoryRowProps {
   job: ForecastJobSummary;
@@ -79,14 +71,7 @@ function JobHistoryRow({ job, onViewResults }: JobHistoryRowProps) {
                 {displayName}
               </span>
             )}
-            <span
-              className={cn(
-                "shrink-0 rounded-full px-2 py-0.5 text-2xs font-medium capitalize",
-                STATUS_STYLES[job.status],
-              )}
-            >
-              {job.status}
-            </span>
+            <StatusBadge status={job.status} />
           </div>
 
           <div className="relative flex shrink-0 items-center gap-1">

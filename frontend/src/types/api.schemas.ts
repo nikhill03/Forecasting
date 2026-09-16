@@ -254,6 +254,87 @@ export const QAResponseSchema = z.object({
   answer: z.string(),
 });
 
+// ── dashboard (F15) ──────────────────────────────────────────────────
+
+export const StatusCountsSchema = z.object({
+  success: z.number(),
+  failed: z.number(),
+  stopped: z.number(),
+  running: z.number(),
+  pending: z.number(),
+});
+
+export const RecentRunSchema = z.object({
+  job_id: z.string(),
+  name: z.string().nullable(),
+  file_name: z.string().nullable(),
+  status: JobStatusSchema,
+  created_at: z.string(),
+  // Winner of the run's first metric; metric_count says how many metrics
+  // the run has, so a multi-metric run can read as "Prophet +2".
+  champion_model: z.string().nullable(),
+  metric_count: z.number(),
+  wmape: z.number().nullable(),
+});
+
+export const TrendPointSchema = z.object({
+  job_id: z.string(),
+  created_at: z.string(),
+  wmape: z.number(),
+});
+
+// Keys match DemandTypeSchema, plus a bucket for series with no demand type.
+export const DemandMixSchema = z.object({
+  Smooth: z.number(),
+  Erratic: z.number(),
+  Intermittent: z.number(),
+  Lumpy: z.number(),
+  unclassified: z.number(),
+});
+
+// A pending or running job. Live progress isn't in here — the database only
+// records it at start and finish — so each row polls its progress endpoint.
+export const ActiveRunSchema = z.object({
+  job_id: z.string(),
+  name: z.string().nullable(),
+  file_name: z.string().nullable(),
+  status: JobStatusSchema,
+  created_at: z.string(),
+  started_at: z.string().nullable(),
+});
+
+export const RunDurationSchema = z.object({
+  job_id: z.string(),
+  name: z.string().nullable(),
+  file_name: z.string().nullable(),
+  created_at: z.string(),
+  duration_seconds: z.number(),
+});
+
+export const ModelWinSchema = z.object({
+  model_name: z.string(),
+  wins: z.number(),
+});
+
+export const DashboardSummarySchema = z.object({
+  total_runs: z.number(),
+  status_counts: StatusCountsSchema,
+  // success / (success + failed); null when no run has finished.
+  success_rate: z.number().nullable(),
+  median_wmape: z.number().nullable(),
+  last_run_at: z.string().nullable(),
+  recent_runs: z.array(RecentRunSchema),
+  // Oldest → newest.
+  accuracy_trend: z.array(TrendPointSchema),
+  demand_mix: DemandMixSchema,
+  active_runs: z.array(ActiveRunSchema),
+  median_run_seconds: z.number().nullable(),
+  // Slowest first.
+  slowest_runs: z.array(RunDurationSchema),
+  // Most wins first; ties by model name.
+  model_wins: z.array(ModelWinSchema),
+});
+
 // ── generic response wrappers ────────────────────────────────────────
 
 export const SuccessResponseSchema = z.object({
