@@ -1,10 +1,17 @@
 import { apiClient } from "./client";
 import { parseOrThrow } from "@/lib/validateResponse";
 import {
+  DataQualityReportSchema,
+  QualityReportRequestSchema,
   SampleListResponseSchema,
   UploadResponseSchema,
 } from "@/types/api.schemas";
-import type { SampleDataset, UploadResponse } from "@/types/api";
+import type {
+  DataQualityReport,
+  QualityReportRequest,
+  SampleDataset,
+  UploadResponse,
+} from "@/types/api";
 
 export const uploadService = {
   async uploadFile(
@@ -59,6 +66,28 @@ export const uploadService = {
       UploadResponseSchema,
       data,
       "uploadService.createFromSample",
+    );
+  },
+
+  // Configure-time preview only — POST /forecast re-checks server-side and
+  // stores its own copy, so nothing here is persisted.
+  async getQualityReport(
+    uploadId: string,
+    request: QualityReportRequest,
+  ): Promise<DataQualityReport> {
+    const body = parseOrThrow(
+      QualityReportRequestSchema,
+      request,
+      "uploadService.getQualityReport:request",
+    );
+    const { data } = await apiClient.post(
+      `/upload/${encodeURIComponent(uploadId)}/quality-report`,
+      body,
+    );
+    return parseOrThrow(
+      DataQualityReportSchema,
+      data,
+      "uploadService.getQualityReport",
     );
   },
 };

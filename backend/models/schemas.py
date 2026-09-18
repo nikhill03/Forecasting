@@ -8,7 +8,7 @@ These are the data contracts between the frontend and backend.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -102,15 +102,15 @@ class ColumnInfo(BaseModel):
 # FORECAST SCHEMAS
 # ══════════════════════════════════════════════════════════════════
 
-class ForecastRequest(BaseModel):
-    upload_id        : str
+class SeriesSelection(BaseModel):
+    """Which series a run covers and how it's evaluated. Shared by
+    ForecastRequest and QualityReportRequest (F16) so the configure-time
+    report is always requested with exactly the bounds a submit enforces."""
+
     selected_sheets  : List[str]
     selected_metrics : List[str]
-    selected_x_cols  : Optional[List[str]] = None
     forecast_horizon : int = Field(default=60, ge=1, le=365)
     test_window      : int = Field(default=30, ge=7, le=180)
-    selected_regions : List[str] = ["US", "IN"]
-    quantile_level   : float = Field(default=0.75, ge=0.5, le=0.99)
 
     @field_validator("selected_sheets")
     @classmethod
@@ -125,6 +125,74 @@ class ForecastRequest(BaseModel):
         if not v:
             raise ValueError("At least one metric must be selected")
         return v
+
+
+class ForecastRequest(SeriesSelection):
+    upload_id        : str
+    selected_x_cols  : Optional[List[str]] = None
+    selected_regions : List[str] = ["US", "IN"]
+    quantile_level   : float = Field(default=0.75, ge=0.5, le=0.99)
+
+
+# ══════════════════════════════════════════════════════════════════
+# DATA QUALITY SCHEMAS (F16)
+# ══════════════════════════════════════════════════════════════════
+
+QualityIssueCode = Literal[
+    "insufficient_history",
+    "metric_missing_in_sheet",
+    "unparseable_dates",
+    "non_numeric_values",
+    "duplicate_timestamps",
+    "non_daily_frequency",
+    "date_gaps",
+    "negative_values",
+    "outliers",
+    "horizon_capped",
+    "sparse_test_window",
+    "short_history",
+]
+
+
+class QualityReportRequest(SeriesSelection):
+    pass
+
+
+class QualityIssue(BaseModel):
+    code     : QualityIssueCode
+    severity : Literal["blocking", "warning"]
+    message  : str
+
+
+class SeriesQuality(BaseModel):
+    """One (sheet, metric) series as the pipeline will see it. Mirrors the
+    dict built by services/data_quality.profile_series."""
+
+    sheet                : str
+    metric               : str
+    rows_total           : int
+    usable_points        : int
+    start                : Optional[datetime] = None
+    end                  : Optional[datetime] = None
+    span_days            : Optional[int] = None
+    inferred_frequency   : Optional[str] = None
+    imputed_pct          : Optional[float] = None
+    duplicate_timestamps : int
+    unparseable_dates    : int
+    non_numeric_values   : int
+    negative_values      : int
+    zero_pct             : float
+    outliers             : int
+    test_split_size      : int
+    effective_horizon    : int
+    issues               : List[QualityIssue] = []
+
+
+class DataQualityReport(BaseModel):
+    generated_at : datetime
+    has_blocking : bool
+    series       : List[SeriesQuality] = []
+    issues       : List[QualityIssue] = []
 
 
 class DemandProfileSchema(BaseModel):
@@ -205,6 +273,9 @@ class ForecastJobResponse(BaseModel):
     completed_at: Optional[datetime]
     results: Optional[Dict[str, SheetResult]] = None
     error: Optional[str] = None
+    # F16: the caveats the run was built on. None for jobs created before
+    # the report existed — the UI says so rather than rendering nothing.
+    quality_report: Optional[DataQualityReport] = None
 
 
 class ProgressResponse(BaseModel):

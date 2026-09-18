@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { computeRefetchInterval } from "./useForecastJob";
+import { blockedReportFrom, computeRefetchInterval } from "./useForecastJob";
+import { ApiError } from "@/services/client";
+import { mockBlockingReport } from "@/test/handlers";
 
 describe("computeRefetchInterval", () => {
   it("returns 2000 before the 30s tier switch", () => {
@@ -34,5 +36,24 @@ describe("computeRefetchInterval", () => {
     // `if (status && ...)` terminal-state guard must short-circuit on
     // `undefined` rather than throwing or mis-reading it as terminal.
     expect(computeRefetchInterval(undefined, null, 1000)).toBe(2000);
+  });
+});
+
+describe("blockedReportFrom", () => {
+  const body = { detail: { message: "blocked", quality_report: mockBlockingReport } };
+
+  it("extracts the report from a 422 blocked submit", () => {
+    expect(blockedReportFrom(new ApiError("blocked", 422, body))).toEqual(mockBlockingReport);
+  });
+
+  it("ignores an ordinary validation 422", () => {
+    const validation = { detail: [{ loc: ["body"], msg: "bad", type: "value_error" }] };
+    expect(blockedReportFrom(new ApiError("bad", 422, validation))).toBeNull();
+  });
+
+  it("ignores other statuses and non-API errors", () => {
+    expect(blockedReportFrom(new ApiError("x", 503, body))).toBeNull();
+    expect(blockedReportFrom(new Error("x"))).toBeNull();
+    expect(blockedReportFrom(null)).toBeNull();
   });
 });

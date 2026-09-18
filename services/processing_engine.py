@@ -17,7 +17,10 @@ import plotly.graph_objects as go
 import redis
 
 # Local imports
-from utils.forecasting import parse_uploaded_data, infer_date_column
+from utils.forecasting import (
+    MIN_SERIES_POINTS, effective_horizon, infer_date_column,
+    min_test_overlap, parse_uploaded_data,
+)
 from services.forecasting_engine import ForecastingEngine
 from services.data_handling import DataHandling
 from utils.metrics import (
@@ -543,7 +546,7 @@ def processing_worker(
                     accuracy = None
                     _write_debug(f"Analysis started for Target: {metric}")
 
-                    dh = DataHandling(min_points=30, allow_negative=False, lookback_days=None)
+                    dh = DataHandling(min_points=MIN_SERIES_POINTS, allow_negative=False, lookback_days=None)
                     raw_series, dh_logs = dh.sanitize(
                         df.reset_index(),
                         date_col=df.index.name if df.index.name else "Date",
@@ -557,10 +560,9 @@ def processing_worker(
                     )
 
                     history_len = len(raw_series)
-                    absolute_max_limit = max(14, int(history_len * 0.30))
-                    safe_horizon = min(int(forecast_horizon), absolute_max_limit)
+                    safe_horizon = effective_horizon(history_len, forecast_horizon)
 
-                    if int(forecast_horizon) > absolute_max_limit:
+                    if int(forecast_horizon) > safe_horizon:
                         _write_debug(f"Notice: Horizon capped at {safe_horizon} (30% of history).")
                     else:
                         _write_debug(f"Forecasting Horizon strictly set to: {safe_horizon} days.")
@@ -789,7 +791,7 @@ def processing_worker(
                                 effective_test = test_series_raw.loc[common_idx].dropna()
                                 effective_test = effective_test[effective_test != 0]
 
-                                min_required = max(7, int(0.3 * len(test_series_raw)))
+                                min_required = min_test_overlap(len(test_series_raw))
                                 if len(effective_test) < min_required:
                                     reason = (
                                         f"Insufficient test overlap: "
@@ -864,7 +866,7 @@ def processing_worker(
                         common_idx = test_series_raw.index.intersection(test_pred_series.index)
                         effective_test = test_series_raw.loc[common_idx].dropna()
                         effective_test = effective_test[effective_test != 0]
-                        if len(effective_test) >= max(7, int(0.3 * len(test_series_raw))):
+                        if len(effective_test) >= min_test_overlap(len(test_series_raw)):
                             accuracy = forecast_accuracy(
                                 test_series_raw.loc[common_idx],
                                 test_pred_series.loc[common_idx],

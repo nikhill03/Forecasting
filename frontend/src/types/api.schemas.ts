@@ -184,6 +184,72 @@ export const SheetResultSchema = z.object({
   metrics: z.record(MetricResultSchema),
 });
 
+// ── data quality (F16) ───────────────────────────────────────────────
+
+export const QualityIssueCodeSchema = z.enum([
+  "insufficient_history",
+  "metric_missing_in_sheet",
+  "unparseable_dates",
+  "non_numeric_values",
+  "duplicate_timestamps",
+  "non_daily_frequency",
+  "date_gaps",
+  "negative_values",
+  "outliers",
+  "horizon_capped",
+  "sparse_test_window",
+  "short_history",
+]);
+
+export const QualityIssueSchema = z.object({
+  code: QualityIssueCodeSchema,
+  severity: z.enum(["blocking", "warning"]),
+  message: z.string(),
+});
+
+export const SeriesQualitySchema = z.object({
+  sheet: z.string(),
+  metric: z.string(),
+  rows_total: z.number(),
+  usable_points: z.number(),
+  start: z.string().nullable(),
+  end: z.string().nullable(),
+  span_days: z.number().nullable(),
+  inferred_frequency: z.string().nullable(),
+  imputed_pct: z.number().nullable(),
+  duplicate_timestamps: z.number(),
+  unparseable_dates: z.number(),
+  non_numeric_values: z.number(),
+  negative_values: z.number(),
+  zero_pct: z.number(),
+  outliers: z.number(),
+  test_split_size: z.number(),
+  effective_horizon: z.number(),
+  issues: z.array(QualityIssueSchema),
+});
+
+export const DataQualityReportSchema = z.object({
+  generated_at: z.string(),
+  has_blocking: z.boolean(),
+  series: z.array(SeriesQualitySchema),
+  issues: z.array(QualityIssueSchema),
+});
+
+export const QualityReportRequestSchema = ForecastRequestSchema.pick({
+  selected_sheets: true,
+  selected_metrics: true,
+  forecast_horizon: true,
+  test_window: true,
+});
+
+// The 422 body POST /forecast returns when the server-side check blocks.
+export const BlockedSubmitErrorSchema = z.object({
+  detail: z.object({
+    message: z.string(),
+    quality_report: DataQualityReportSchema,
+  }),
+});
+
 export const ForecastJobResponseSchema = z.object({
   job_id: z.string(),
   status: JobStatusSchema,
@@ -195,6 +261,8 @@ export const ForecastJobResponseSchema = z.object({
   completed_at: z.string().nullable(),
   results: z.record(SheetResultSchema).nullable(),
   error: z.string().nullable(),
+  // null for jobs created before F16; optional so older fixtures still parse.
+  quality_report: DataQualityReportSchema.nullable().optional(),
 });
 
 export const ForecastJobMetricSummarySchema = z.object({

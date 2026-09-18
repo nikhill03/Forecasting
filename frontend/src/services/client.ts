@@ -47,8 +47,18 @@ function buildApiError(error: AxiosError<ApiValidationError | { detail: string }
   let message = "An unexpected error occurred. Please try again.";
 
   if (data && "detail" in data) {
+    const detail: unknown = data.detail;
     if (typeof data.detail === "string") {
       message = data.detail;
+    } else if (
+      // Structured domain error, e.g. F16's blocked submit:
+      // { detail: { message, quality_report } }.
+      typeof detail === "object" &&
+      detail !== null &&
+      "message" in detail &&
+      typeof detail.message === "string"
+    ) {
+      message = detail.message;
     } else {
       const parsed = ApiValidationErrorSchema.safeParse(data);
       if (parsed.success) {

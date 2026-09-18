@@ -54,6 +54,7 @@ from backend.models.schemas import (
     RevertActionRequest,
     SuccessResponse,
 )
+from backend.services.data_quality import build_quality_report
 from backend.services.forecast_edits import (
     InvalidOperationError,
     affected_points_before,
@@ -271,6 +272,7 @@ async def _job_to_response(job: ForecastJob) -> ForecastJobResponse:
         completed_at=job.completed_at,
         results=results,
         error=job.error_message,
+        quality_report=job.quality_report,
     )
 
 
@@ -368,6 +370,21 @@ async def submit_forecast(
             detail=f"Upload '{request.upload_id}' not found",
         )
 
+    # F16: re-check server-side before any job exists. A blocked submit must
+    # not become a failed run in history or dent the dashboard success rate,
+    # and the client's own copy of the report is never trusted.
+    quality_report = await build_quality_report(upload, request)
+    report_json    = quality_report.model_dump(mode="json")
+    if quality_report.has_blocking:
+        logger.info("forecast_blocked_by_data_quality", upload_id=upload.id)
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message"       : "This data can't be forecast yet — fix the issues marked as blocking.",
+                "quality_report": report_json,
+            },
+        )
+
     job = ForecastJob(
         id=str(uuid.uuid4()),
         user_id=user_id,
@@ -386,6 +403,7 @@ async def submit_forecast(
             "selected_regions": request.selected_regions,
             "quantile_level"  : request.quantile_level,
         },
+        quality_report=report_json,
         created_at=datetime.now(timezone.utc),
     )
     db.add(job)
@@ -417,6 +435,7 @@ async def submit_forecast(
         created_at=job.created_at,
         started_at=None,
         completed_at=None,
+        quality_report=quality_report,
     )
 
 

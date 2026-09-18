@@ -86,6 +86,10 @@ class ForecastJob(Base):
     progress_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     celery_task_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # F16 data-quality report, built by POST /forecast from the exact file
+    # and selection the run uses. NULL = job predates the report; never
+    # backfilled, since the stored input may no longer match what ran.
+    quality_report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

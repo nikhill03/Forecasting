@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import { RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { MetricResultCard } from "@/components/forecast/MetricResultCard";
+import { DataQualityCaveats } from "@/components/quality/DataQualityCaveats";
 import { useForecastStore } from "@/store/forecastStore";
 import { useForecastResult } from "@/hooks/useForecastJob";
 
@@ -53,6 +54,10 @@ export function ResultsPage() {
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
           New forecast
         </Button>
+      </div>
+
+      <div className="mb-6">
+        <DataQualityCaveats report={result.quality_report ?? null} />
       </div>
 
       <div className="space-y-8">

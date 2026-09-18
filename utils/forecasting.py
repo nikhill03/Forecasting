@@ -4,6 +4,31 @@ import pandas as pd
 from typing import Dict, Optional
 
 
+# ── Pipeline rules ────────────────────────────────────────────────────
+# The single definition of each numeric rule the forecast pipeline applies
+# to a series. processing_engine / forecasting_engine enforce them and
+# services/data_quality.py reports on them (F16) — both import from here so
+# the pre-run report cannot drift from what a run actually does.
+
+MIN_SERIES_POINTS = 30   # DataHandling.sanitize drops a series below this
+
+
+def holdout_size(n: int, test_window: int) -> int:
+    """Points held out for backtesting: the requested window, capped at 20%
+    of the series, never fewer than 7."""
+    return max(7, min(int(test_window), int(n * 0.20)))
+
+
+def effective_horizon(n: int, horizon: int) -> int:
+    """Forecast horizon after the pipeline's cap of 30% of history (min 14)."""
+    return min(int(horizon), max(14, int(n * 0.30)))
+
+
+def min_test_overlap(split: int) -> int:
+    """Non-zero, non-null test actuals a model needs to be scored at all."""
+    return max(7, int(0.3 * split))
+
+
 def infer_date_column(df: pd.DataFrame, min_parse_ratio: float = 0.8) -> Optional[str]:
     """
     Detects the date/time column by parsing actual values, not by matching
