@@ -3,6 +3,8 @@ import type {
   ActionCenterStateSchema,
   ActiveRunSchema,
   ApiValidationErrorSchema,
+  BlockedSubmitErrorSchema,
+  DataQualityReportSchema,
   DashboardSummarySchema,
   DemandMixSchema,
   DemandProfileSchema,
@@ -22,10 +24,14 @@ import type {
   ModelWinSchema,
   ProgressResponseSchema,
   QAResponseSchema,
+  QualityIssueCodeSchema,
+  QualityIssueSchema,
+  QualityReportRequestSchema,
   RecentRunSchema,
   RunDurationSchema,
   SampleDatasetSchema,
   SampleListResponseSchema,
+  SeriesQualitySchema,
   SheetResultSchema,
   StatusCountsSchema,
   SuccessResponseSchema,
@@ -51,6 +57,13 @@ export type SampleDataset = z.infer<typeof SampleDatasetSchema>;
 export type SampleListResponse = z.infer<typeof SampleListResponseSchema>;
 
 export type ForecastRequest = z.infer<typeof ForecastRequestSchema>;
+
+export type QualityIssueCode = z.infer<typeof QualityIssueCodeSchema>;
+export type QualityIssue = z.infer<typeof QualityIssueSchema>;
+export type SeriesQuality = z.infer<typeof SeriesQualitySchema>;
+export type DataQualityReport = z.infer<typeof DataQualityReportSchema>;
+export type QualityReportRequest = z.infer<typeof QualityReportRequestSchema>;
+export type BlockedSubmitError = z.infer<typeof BlockedSubmitErrorSchema>;
 
 export type DemandType = z.infer<typeof DemandTypeSchema>;
 export type DemandProfile = z.infer<typeof DemandProfileSchema>;

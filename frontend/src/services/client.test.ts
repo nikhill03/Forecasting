@@ -123,3 +123,21 @@ describe("apiClient 401 refresh interceptor", () => {
     expect(refreshCallCount).toBe(0);
   });
 });
+
+describe("apiClient error messages", () => {
+  it("uses detail.message from a structured error body", async () => {
+    server.use(
+      http.post("*/api/v1/forecast", () =>
+        HttpResponse.json(
+          { detail: { message: "Fix the blocking issues.", quality_report: {} } },
+          { status: 422 },
+        ),
+      ),
+    );
+
+    await expect(apiClient.post("/forecast", {})).rejects.toMatchObject({
+      message: "Fix the blocking issues.",
+      status: 422,
+    });
+  });
+});

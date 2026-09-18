@@ -2,8 +2,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef } from "react";
 import { forecastService } from "@/services/forecastService";
 import { useForecastStore } from "@/store/forecastStore";
-import type { ForecastRequest } from "@/types/api";
+import type { DataQualityReport, ForecastRequest } from "@/types/api";
 import { ApiError } from "@/services/client";
+import { BlockedSubmitErrorSchema } from "@/types/api.schemas";
 
 export const TERMINAL_STATES = new Set(["success", "failed", "stopped"]);
 
@@ -43,7 +44,19 @@ export function useSubmitForecast() {
     isSubmitting: mutation.isPending,
     error:
       mutation.error instanceof ApiError ? mutation.error.message : null,
+    blockedReport: blockedReportFrom(mutation.error),
+    resetSubmit: mutation.reset,
   };
+}
+
+/**
+ * The data-quality report from a submit the server refused (F16's 422),
+ * or null for any other outcome. ApiError.detail carries the raw body.
+ */
+export function blockedReportFrom(error: unknown): DataQualityReport | null {
+  if (!(error instanceof ApiError) || error.status !== 422) return null;
+  const parsed = BlockedSubmitErrorSchema.safeParse(error.detail);
+  return parsed.success ? parsed.data.detail.quality_report : null;
 }
 
 export function useForecastProgress(jobId: string | null) {

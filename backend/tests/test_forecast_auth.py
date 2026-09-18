@@ -18,7 +18,10 @@ from functools import partial
 from backend.models.db_models import ForecastJob
 from conftest import make_csv_bytes
 
-_make_csv_bytes = partial(make_csv_bytes, rows=10, sales=range(10))
+# 50 rows, not 10: since F16, POST /forecast rejects a series with fewer than
+# 30 usable points (422). These tests are about auth and ownership, not data
+# size, so the fixture just needs to clear that floor.
+_make_csv_bytes = partial(make_csv_bytes, rows=50, sales=range(50))
 
 
 async def _make_job(db_session, owner_id: str, **overrides) -> ForecastJob:

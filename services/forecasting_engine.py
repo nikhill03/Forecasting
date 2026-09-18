@@ -37,6 +37,8 @@ from typing import Dict, List, Optional, Callable
 import numpy as np
 import pandas as pd
 
+from utils.forecasting import holdout_size
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 warnings.filterwarnings("ignore", category=UserWarning)
 
@@ -202,7 +204,7 @@ class ForecastingEngine:
         n = len(series)
         if n < 15:
             raise ValueError(f"Series too short ({n} points). Minimum 15 required.")
-        split = max(7, min(self.test_size, int(n * 0.20)))
+        split = holdout_size(n, self.test_size)
         return series.iloc[:-split], series.iloc[-split:]
 
     # ── Future date index ────────────────────────────────────────────

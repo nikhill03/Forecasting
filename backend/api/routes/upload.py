@@ -9,6 +9,7 @@ Endpoints:
     GET  /api/v1/upload/samples      — list built-in sample datasets
     POST /api/v1/upload/sample/{id}  — materialise a sample as a real upload
     GET  /api/v1/upload/{id}         — get upload metadata (sheets, columns)
+    POST /api/v1/upload/{id}/quality-report — profile selected series before a run (F16)
     Uploads to S3, persists metadata in PostgreSQL. Falls back to a
     job-scoped local filesystem path (local dev only) when S3 isn't
     configured.
@@ -23,12 +24,9 @@ _persist_upload, the design has gone wrong — fix the design.
 from __future__ import annotations
 
 import asyncio
-import io
 import os
 import uuid
-from typing import Dict
 
-import pandas as pd
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
@@ -39,10 +37,14 @@ from backend.core.database import get_db
 from backend.core.dependencies import get_current_user_id, parse_uuid_or_404
 from backend.models.db_models import Upload
 from backend.models.schemas import (
+    DataQualityReport,
+    QualityReportRequest,
     SampleDatasetResponse,
     SampleListResponse,
     UploadResponse,
 )
+from backend.services.data_quality import build_quality_report
+from backend.services.file_parsing import parse_file
 from backend.services.sample_datasets import (
     get_sample,
     list_samples,
@@ -54,40 +56,6 @@ router = APIRouter(prefix="/upload", tags=["upload"])
 logger = structlog.get_logger("forecasting.upload")
 
 _LOCAL_STORAGE_ROOT = "outputs"
-
-
-# Tried in order. utf-8-sig also strips a BOM if present; cp1252 covers the
-# smart quotes / em dashes / degree signs Excel commonly writes on Windows;
-# latin-1 always succeeds (every byte is a valid code point) and is the
-# last-resort fallback.
-_CSV_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
-
-
-def _read_csv_any_encoding(content: bytes) -> pd.DataFrame:
-    last_error: UnicodeDecodeError | None = None
-    for encoding in _CSV_ENCODINGS:
-        try:
-            return pd.read_csv(io.BytesIO(content), encoding=encoding)
-        except UnicodeDecodeError as e:
-            last_error = e
-    raise last_error  # pragma: no cover — latin-1 never raises UnicodeDecodeError
-
-
-def _parse_file(content: bytes, filename: str) -> Dict[str, pd.DataFrame]:
-    try:
-        if filename.endswith((".xlsx", ".xls")):
-            xls = pd.ExcelFile(io.BytesIO(content))
-            return {sheet: xls.parse(sheet) for sheet in xls.sheet_names}
-        elif filename.endswith(".csv"):
-            df = _read_csv_any_encoding(content)
-            return {"Sheet1": df}
-        else:
-            raise ValueError(f"Unsupported file type: {filename}")
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=f"Failed to parse file: {str(e)}",
-        )
 
 
 def _reject_unsafe_filename(filename: str) -> None:
@@ -169,7 +137,7 @@ async def _persist_upload(
             detail=f"File type not supported. Allowed: {', '.join(allowed)}",
         )
 
-    sheets_df = _parse_file(content, filename)
+    sheets_df = parse_file(content, filename)
 
     sheets_with_dates = {
         name: df for name, df in sheets_df.items()
@@ -335,3 +303,27 @@ async def get_upload(
         )
 
     return _to_upload_response(upload)
+
+
+@router.post("/{upload_id}/quality-report", response_model=DataQualityReport)
+async def get_quality_report(
+    upload_id: str,
+    request: QualityReportRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> DataQualityReport:
+    """Profile the selected series before a run (F16). Persists nothing —
+    POST /forecast rebuilds and stores the authoritative copy."""
+    parse_uuid_or_404(upload_id, "Upload")
+
+    result = await db.execute(
+        select(Upload).where(Upload.id == upload_id, Upload.user_id == user_id)
+    )
+    upload = result.scalar_one_or_none()
+    if not upload:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload '{upload_id}' not found",
+        )
+
+    return await build_quality_report(upload, request)

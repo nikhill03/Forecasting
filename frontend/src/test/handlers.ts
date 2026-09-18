@@ -2,6 +2,8 @@ import { http, HttpResponse } from "msw";
 import type {
   ActiveRun,
   DashboardSummary,
+  DataQualityReport,
+  SeriesQuality,
   SampleDataset,
   TokenResponse,
   UploadResponse,
@@ -166,6 +168,81 @@ export const mockDashboardSummary: DashboardSummary = {
   ],
 };
 
+// ── data quality (F16) ───────────────────────────────────────────────
+
+export const mockSeriesQuality: SeriesQuality = {
+  sheet: "Sheet1",
+  metric: "units_sold",
+  rows_total: 730,
+  usable_points: 730,
+  start: "2023-01-01T00:00:00",
+  end: "2024-12-30T00:00:00",
+  span_days: 729,
+  inferred_frequency: "D",
+  imputed_pct: 0,
+  duplicate_timestamps: 0,
+  unparseable_dates: 0,
+  non_numeric_values: 0,
+  negative_values: 0,
+  zero_pct: 0,
+  outliers: 0,
+  test_split_size: 30,
+  effective_horizon: 60,
+  issues: [],
+};
+
+// The default: a clean report, so pages that don't care about the data
+// check render without one getting in the way.
+export const mockQualityReport: DataQualityReport = {
+  generated_at: "2026-09-16T10:00:00Z",
+  has_blocking: false,
+  series: [mockSeriesQuality],
+  issues: [],
+};
+
+export const mockWarningReport: DataQualityReport = {
+  ...mockQualityReport,
+  series: [
+    {
+      ...mockSeriesQuality,
+      duplicate_timestamps: 3,
+      issues: [
+        {
+          code: "duplicate_timestamps",
+          severity: "warning",
+          message:
+            "3 duplicate dates: only the last value for each date is kept — values are not summed.",
+        },
+      ],
+    },
+  ],
+};
+
+export const mockBlockingReport: DataQualityReport = {
+  ...mockQualityReport,
+  has_blocking: true,
+  series: [
+    {
+      ...mockSeriesQuality,
+      rows_total: 20,
+      usable_points: 20,
+      issues: [
+        {
+          code: "insufficient_history",
+          severity: "blocking",
+          message:
+            "Only 20 usable data points; at least 30 are needed to train and test a model.",
+        },
+        {
+          code: "negative_values",
+          severity: "warning",
+          message: "2 negative values will be clipped to 0.",
+        },
+      ],
+    },
+  ],
+};
+
 export const handlers = [
   http.post("*/api/v1/auth/login", () => HttpResponse.json(validTokenResponse)),
   http.post("*/api/v1/auth/refresh", () => HttpResponse.json(validTokenResponse)),
@@ -178,5 +255,8 @@ export const handlers = [
   ),
   http.get("*/api/v1/dashboard", () =>
     HttpResponse.json(emptyDashboardSummary),
+  ),
+  http.post("*/api/v1/upload/:uploadId/quality-report", () =>
+    HttpResponse.json(mockQualityReport),
   ),
 ];

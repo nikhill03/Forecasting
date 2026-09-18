@@ -3,8 +3,10 @@ import { useEffect, useMemo } from "react";
 import { ChevronLeft } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
+import { DataQualityPanel } from "@/components/quality/DataQualityPanel";
 import { useForecastStore } from "@/store/forecastStore";
 import { useSubmitForecast } from "@/hooks/useForecastJob";
+import { useDataQualityReport } from "@/hooks/useDataQualityReport";
 import { cn } from "@/lib/utils";
 
 const REGIONS = [
@@ -59,8 +61,18 @@ function MultiSelectChips({
 
 export function ConfigurePage() {
   const navigate = useNavigate();
-  const { upload, config, updateConfig, activeJobId } = useForecastStore();
-  const { submit, isSubmitting, error } = useSubmitForecast();
+  const { upload, config, updateConfig, activeJobId, reset } =
+    useForecastStore();
+  const { submit, isSubmitting, error, blockedReport, resetSubmit } =
+    useSubmitForecast();
+  const quality = useDataQualityReport(upload?.upload_id, config);
+
+  // A refused submit's report describes the selection at that moment. Once
+  // the selection changes it's stale — drop it so the live check takes over
+  // and can re-enable the button.
+  useEffect(() => {
+    resetSubmit();
+  }, [config, resetSubmit]);
 
   useEffect(() => {
     if (!upload) navigate("/upload");
@@ -91,8 +103,19 @@ export function ConfigurePage() {
     );
   };
 
+  // Only a report that says "blocking" disables submit. Loading or a failed
+  // check never does — POST /forecast repeats the check itself.
+  const shownReport = blockedReport ?? quality.report;
+  const blockedSeries = shownReport?.has_blocking
+    ? shownReport.series
+        .filter((s) => s.issues.some((i) => i.severity === "blocking"))
+        .map((s) => `${s.sheet} / ${s.metric}`)
+    : [];
+
   const canSubmit =
-    config.selectedSheets.length > 0 && config.selectedMetrics.length > 0;
+    config.selectedSheets.length > 0 &&
+    config.selectedMetrics.length > 0 &&
+    !shownReport?.has_blocking;
 
   const handleSubmit = () => {
     submit({
@@ -112,7 +135,12 @@ export function ConfigurePage() {
     <div className="mx-auto max-w-5xl">
       <button
         type="button"
-        onClick={() => navigate("/upload")}
+        onClick={() => {
+          // UploadPage forwards to /configure while a file is loaded, so Back
+          // must clear it first or it lands right back here.
+          reset();
+          navigate("/upload");
+        }}
         className="mb-4 flex items-center gap-1 text-sm text-text-muted hover:text-text"
       >
         <ChevronLeft className="h-4 w-4" aria-hidden="true" />
@@ -245,7 +273,16 @@ export function ConfigurePage() {
           </CardContent>
         </Card>
 
-        {error && (
+        <DataQualityPanel
+          className="lg:col-span-2"
+          report={shownReport}
+          isLoading={quality.isLoading}
+          isFetching={quality.isFetching && !blockedReport}
+          isError={quality.isError && !blockedReport}
+          idleReason={quality.idleReason}
+        />
+
+        {error && !blockedReport && (
           <div
             role="alert"
             className="rounded-md bg-danger/10 px-4 py-3 text-sm text-danger lg:col-span-2"
@@ -254,7 +291,14 @@ export function ConfigurePage() {
           </div>
         )}
 
-        <div className="flex justify-end pt-2 lg:col-span-2">
+        <div className="flex flex-col items-end gap-2 pt-2 sm:flex-row sm:items-center sm:justify-end sm:gap-4 lg:col-span-2">
+          {shownReport?.has_blocking && (
+            <p className="text-sm text-danger" role="status">
+              {blockedSeries.length > 0
+                ? `Fix ${blockedSeries.join(", ")} to run this forecast.`
+                : "Fix the issues above to run this forecast."}
+            </p>
+          )}
           <Button
             onClick={handleSubmit}
             disabled={!canSubmit}
