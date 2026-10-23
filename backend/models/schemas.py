@@ -410,6 +410,10 @@ class DashboardSummary(BaseModel):
     median_wmape       = median of per-run WMAPE over accuracy_trend's window.
     median_run_seconds = median duration of the newest successful runs.
     model_wins         = champion counts per model, every run-metric counted.
+    realized_wmape     = median over runs of how far the forecast was from what
+                         actually happened (F17). Never averaged with
+                         median_wmape, which is backtest. realized_runs is the
+                         number of runs behind it.
     """
 
     total_runs         : int
@@ -424,6 +428,8 @@ class DashboardSummary(BaseModel):
     median_run_seconds : Optional[float] = None
     slowest_runs       : List[RunDuration] = []
     model_wins         : List[ModelWin] = []
+    realized_wmape     : Optional[float] = None
+    realized_runs      : int = 0
 
 
 # ══════════════════════════════════════════════════════════════════
