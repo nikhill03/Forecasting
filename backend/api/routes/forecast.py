@@ -62,12 +62,6 @@ from backend.models.schemas import (
     SuccessResponse,
 )
 from backend.services.data_quality import build_quality_report
-from backend.services.realized_accuracy import (
-    build_realized_response,
-    evaluate_job,
-    list_candidate_uploads,
-)
-from backend.services.job_results import load_job_results, read_json_file
 from backend.services.forecast_edits import (
     InvalidOperationError,
     affected_points_before,
@@ -75,7 +69,13 @@ from backend.services.forecast_edits import (
     parse_operation,
     replay_edits,
 )
+from backend.services.job_results import load_job_results, read_json_file
 from backend.services.llm_client import LLMClientError, chat_completion
+from backend.services.realized_accuracy import (
+    build_realized_response,
+    evaluate_job,
+    list_candidate_uploads,
+)
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 logger = structlog.get_logger("forecasting.forecast")
@@ -923,6 +923,6 @@ async def evaluate_realized_accuracy(
             detail=f"Upload '{request.upload_id}' not found",
         )
 
-    await evaluate_job(db, job, upload)
+    results = await evaluate_job(db, job, upload)
     await db.commit()
-    return await build_realized_response(db, job)
+    return await build_realized_response(db, job, results)

@@ -1,4 +1,5 @@
-import { useMutation } from "@tanstack/react-query";
+import { useEffect, useRef } from "react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { FileDropzone } from "@/components/upload/FileDropzone";
 import { Button } from "@/components/ui/Button";
 import {
@@ -9,7 +10,7 @@ import { ApiError } from "@/services/client";
 import { uploadService } from "@/services/uploadService";
 import { formatDate, formatRelativeTime } from "@/lib/format";
 
-interface CheckActualsDialogProps {
+interface CheckActualsPanelProps {
   jobId: string;
   forecastStart: string | null;
   forecastEnd: string | null;
@@ -19,13 +20,20 @@ interface CheckActualsDialogProps {
 
 // An inline panel rather than a modal: the app has no dialog primitive, and
 // this is a small choice (pick a file or add one) that reads fine in place.
-export function CheckActualsDialog({
+// It takes focus when it opens; the section returns focus to its trigger on close.
+export function CheckActualsPanel({
   jobId,
   forecastStart,
   forecastEnd,
   panelId,
   onClose,
-}: CheckActualsDialogProps) {
+}: CheckActualsPanelProps) {
+  const queryClient = useQueryClient();
+  const panelRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    panelRef.current?.focus();
+  }, []);
+
   const candidates = useRealizedCandidates(jobId, true);
   const { evaluate, isEvaluating, error: evaluateError, reset } =
     useEvaluateRealized(jobId);
@@ -34,7 +42,12 @@ export function CheckActualsDialog({
   // which would swap the dataset out from under the user's next forecast.
   const upload = useMutation({
     mutationFn: (file: File) => uploadService.uploadFile(file),
-    onSuccess: (uploaded) => evaluate(uploaded.upload_id, { onSuccess: onClose }),
+    onSuccess: (uploaded) => {
+      // The new file is now a candidate, which matters if the check below fails
+      // and the user comes back to pick it.
+      void queryClient.invalidateQueries({ queryKey: ["realized-candidates", jobId] });
+      evaluate(uploaded.upload_id, { onSuccess: onClose });
+    },
   });
 
   const busy = upload.isPending || isEvaluating;
@@ -59,9 +72,11 @@ export function CheckActualsDialog({
 
   return (
     <section
+      ref={panelRef}
       id={panelId}
+      tabIndex={-1}
       aria-label="Check against newer data"
-      className="flex animate-slide-up flex-col gap-4 rounded-md border border-border bg-bg-raised p-4"
+      className="flex animate-slide-up flex-col gap-4 rounded-md border border-border bg-bg-raised p-4 focus:outline-none"
     >
       <p className="text-sm text-text-muted">
         Pick a file that has actual values for {needs}. Dates are matched

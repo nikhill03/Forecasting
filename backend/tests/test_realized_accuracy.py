@@ -1,14 +1,24 @@
 """
 backend/tests/test_realized_accuracy.py
 ========================================
-F17 — realized accuracy. Pure maths first (services/realized_accuracy.py);
-route tests are added alongside the endpoints.
+F17 — realized accuracy: the pure maths (services/realized_accuracy.py), sheet
+pairing, and the routes under /forecast/{id}/realized. A second, spec-driven
+suite lives in test_p2_5_forecast_accuracy_tracking.py.
 """
 from __future__ import annotations
 
+import io
+import json
+import uuid
+from datetime import datetime, timedelta, timezone
+
 import pandas as pd
 import pytest
+from sqlalchemy import func, select
 
+from backend.core.config import settings
+from backend.models.db_models import ForecastEdit, ForecastEvaluation, ForecastJob, Upload
+from backend.services.realized_accuracy import pair_sheets
 from services.realized_accuracy import (
     actual_series,
     compare,
@@ -118,27 +128,22 @@ class TestActualSeries:
 # Jobs and uploads are seeded directly; no POST /forecast, so
 # mock_celery_delay isn't needed.
 # ══════════════════════════════════════════════════════════════════
-import json
-import uuid
-from datetime import datetime, timedelta, timezone
-
-from backend.core.config import settings
-from backend.models.db_models import ForecastEdit, ForecastJob, Upload
-
 HORIZON_START = "2025-02-01"
 HORIZON       = 10   # forecast dates 2025-02-01 .. 2025-02-10, every forecast value 100
 
 
-def _results(metric: str = "sales") -> dict:
+def _results(*metrics: str) -> dict:
     dates = pd.date_range(HORIZON_START, periods=HORIZON, freq="D")
-    return {"Sheet1": {"metrics": {metric: {
-        "records": [{"Date": d.strftime("%Y-%m-%d"), "Forecast": 100.0} for d in dates],
-    }}}}
+    records = [{"Date": d.strftime("%Y-%m-%d"), "Forecast": 100.0} for d in dates]
+    return {"Sheet1": {"metrics": {m: {"records": records} for m in (metrics or ("sales",))}}}
 
 
-async def _seed_job(db, user, tmp_path, *, status: str = "success", upload_id: str | None = None):
+async def _seed_job(
+    db, user, tmp_path, *, status: str = "success", upload_id: str | None = None,
+    metrics: tuple[str, ...] = (),
+):
     path = tmp_path / f"{uuid.uuid4()}.json"
-    path.write_text(json.dumps(_results()))
+    path.write_text(json.dumps(_results(*metrics)))
     job = ForecastJob(
         id=str(uuid.uuid4()), user_id=user.id, status=status, progress_pct=100,
         s3_output_key=f"local:{path}", s3_input_key="uploads/own-input.csv",
@@ -230,9 +235,6 @@ class TestRealizedRoutes:
     async def test_reevaluating_the_same_upload_replaces_its_row(
         self, async_client, db_session, test_user, make_auth_headers, tmp_path, s3_client
     ):
-        from sqlalchemy import func, select
-        from backend.models.db_models import ForecastEvaluation
-
         job     = await _seed_job(db_session, test_user, tmp_path)
         upload  = await _seed_upload(db_session, test_user, s3_client, _days(HORIZON))
         headers = make_auth_headers(test_user)
@@ -373,3 +375,149 @@ class TestRealizedCandidates:
             f"/api/v1/forecast/{job.id}/realized/candidates", headers=make_auth_headers(test_user)
         )
         assert len(res.json()["candidates"]) == 20
+
+
+class TestPairSheets:
+    def test_same_names_pair(self):
+        assert pair_sheets(["A", "B"], ["B", "A", "C"]) == {"A": "A", "B": "B"}
+
+    def test_a_lone_sheet_on_each_side_pairs_whatever_they_are_called(self):
+        assert pair_sheets(["Sheet1"], ["Export"]) == {"Sheet1": "Export"}
+
+    def test_several_sheets_are_never_guessed(self):
+        assert pair_sheets(["A", "B"], ["X"]) == {}
+        assert pair_sheets(["A", "B"], ["X", "Y"]) == {}
+
+    def test_a_lone_job_sheet_does_not_pair_with_several_upload_sheets(self):
+        assert pair_sheets(["Sheet1"], ["X", "Y"]) == {}
+
+
+class TestRealizedEdgeCases:
+    async def test_storage_failure_is_503(
+        self, async_client, db_session, test_user, make_auth_headers, tmp_path, s3_client, monkeypatch
+    ):
+        job    = await _seed_job(db_session, test_user, tmp_path)
+        upload = await _seed_upload(db_session, test_user, s3_client, _days(HORIZON))
+
+        async def _gone(_key: str) -> bytes:
+            raise FileNotFoundError("gone")
+
+        monkeypatch.setattr("backend.services.realized_accuracy.load_upload_bytes", _gone)
+        res = await async_client.post(
+            f"/api/v1/forecast/{job.id}/realized", json={"upload_id": upload.id},
+            headers=make_auth_headers(test_user),
+        )
+        assert res.status_code == 503
+
+    async def test_a_newer_no_overlap_check_shadows_an_older_scored_one(
+        self, async_client, db_session, test_user, make_auth_headers, tmp_path, s3_client
+    ):
+        job     = await _seed_job(db_session, test_user, tmp_path)
+        scored  = await _seed_upload(db_session, test_user, s3_client, _days(HORIZON), name="scored.csv")
+        early   = await _seed_upload(db_session, test_user, s3_client, _days(5, start="2025-01-01"), name="early.csv")
+        headers = make_auth_headers(test_user)
+        for upload in (scored, early):
+            await async_client.post(
+                f"/api/v1/forecast/{job.id}/realized", json={"upload_id": upload.id}, headers=headers
+            )
+        res = await async_client.get(f"/api/v1/forecast/{job.id}/realized", headers=headers)
+        (metric,) = res.json()["metrics"]
+        assert metric["status"]           == "no_overlap"
+        assert metric["upload_file_name"] == "early.csv"
+        assert metric["model"] is None
+
+    async def test_rechecking_an_older_upload_makes_it_the_newest(
+        self, async_client, db_session, test_user, make_auth_headers, tmp_path, s3_client
+    ):
+        job     = await _seed_job(db_session, test_user, tmp_path)
+        first   = await _seed_upload(db_session, test_user, s3_client, _days(HORIZON, 110.0), name="first.csv")
+        second  = await _seed_upload(db_session, test_user, s3_client, _days(HORIZON, 100.0), name="second.csv")
+        headers = make_auth_headers(test_user)
+        for upload in (first, second, first):
+            await async_client.post(
+                f"/api/v1/forecast/{job.id}/realized", json={"upload_id": upload.id}, headers=headers
+            )
+        res = await async_client.get(f"/api/v1/forecast/{job.id}/realized", headers=headers)
+        (metric,) = res.json()["metrics"]
+        assert metric["upload_file_name"] == "first.csv"
+
+    async def test_a_file_with_only_one_of_two_metrics_measures_just_that_one(
+        self, async_client, db_session, test_user, make_auth_headers, tmp_path, s3_client
+    ):
+        job    = await _seed_job(db_session, test_user, tmp_path, metrics=("sales", "returns"))
+        upload = await _seed_upload(db_session, test_user, s3_client, _days(HORIZON))   # only "sales"
+        res = await async_client.post(
+            f"/api/v1/forecast/{job.id}/realized", json={"upload_id": upload.id},
+            headers=make_auth_headers(test_user),
+        )
+        assert res.status_code == 200
+        by_metric = {m["metric_name"]: m["status"] for m in res.json()["metrics"]}
+        assert by_metric == {"sales": "complete", "returns": "awaiting_actuals"}
+
+    async def test_metric_in_an_unpairable_sheet_is_awaiting_not_an_error(
+        self, async_client, db_session, test_user, make_auth_headers, tmp_path, s3_client
+    ):
+        job = await _seed_job(db_session, test_user, tmp_path)
+        # Two sheets in the upload, neither named like the job's lone sheet: nothing pairs,
+        # yet the metric column is present, so this is not a "wrong file" 422.
+        buf = io.BytesIO()
+        frame = pd.DataFrame({"date": list(_days(HORIZON)), "sales": 110.0})
+        with pd.ExcelWriter(buf) as writer:
+            frame.to_excel(writer, sheet_name="X", index=False)
+            frame.to_excel(writer, sheet_name="Y", index=False)
+        key = f"uploads/{uuid.uuid4()}/two-sheets.xlsx"
+        s3_client.put_object(Bucket=settings.S3_BUCKET_NAME, Key=key, Body=buf.getvalue())
+        upload = Upload(
+            id=str(uuid.uuid4()), user_id=test_user.id, file_name="two-sheets.xlsx", s3_key=key,
+            sheets=["X", "Y"], columns={"X": ["date", "sales"], "Y": ["date", "sales"]},
+            row_counts={"X": HORIZON, "Y": HORIZON}, file_size_bytes=len(buf.getvalue()),
+        )
+        db_session.add(upload)
+        await db_session.flush()
+
+        res = await async_client.post(
+            f"/api/v1/forecast/{job.id}/realized", json={"upload_id": upload.id},
+            headers=make_auth_headers(test_user),
+        )
+        assert res.status_code == 200, res.text
+        assert [m["status"] for m in res.json()["metrics"]] == ["awaiting_actuals"]
+
+    async def test_an_older_matching_upload_is_not_hidden_by_many_newer_ones(
+        self, async_client, db_session, test_user, make_auth_headers, tmp_path
+    ):
+        job = await _seed_job(db_session, test_user, tmp_path)
+        older = Upload(
+            id=str(uuid.uuid4()), user_id=test_user.id, file_name="matching.csv", s3_key="k/match",
+            sheets=["Sheet1"], columns={"Sheet1": ["date", "sales"]}, row_counts={"Sheet1": 1},
+            file_size_bytes=1, created_at=job.created_at + timedelta(days=1),
+        )
+        db_session.add(older)
+        for i in range(105):
+            db_session.add(Upload(
+                id=str(uuid.uuid4()), user_id=test_user.id, file_name=f"other{i}.csv", s3_key=f"k/o{i}",
+                sheets=["Sheet1"], columns={"Sheet1": ["date", "revenue"]}, row_counts={"Sheet1": 1},
+                file_size_bytes=1, created_at=job.created_at + timedelta(days=2, minutes=i),
+            ))
+        await db_session.flush()
+
+        res = await async_client.get(
+            f"/api/v1/forecast/{job.id}/realized/candidates", headers=make_auth_headers(test_user)
+        )
+        assert [c["upload_id"] for c in res.json()["candidates"]] == [older.id]
+
+    async def test_a_metric_name_is_matched_literally_not_as_a_jsonpath(
+        self, async_client, db_session, test_user, make_auth_headers, tmp_path
+    ):
+        job = await _seed_job(db_session, test_user, tmp_path, metrics=('sales" || true || "x',))
+        db_session.add(Upload(
+            id=str(uuid.uuid4()), user_id=test_user.id, file_name="a.csv", s3_key="k/a",
+            sheets=["Sheet1"], columns={"Sheet1": ["date", "revenue"]}, row_counts={"Sheet1": 1},
+            file_size_bytes=1, created_at=job.created_at + timedelta(days=1),
+        ))
+        await db_session.flush()
+
+        res = await async_client.get(
+            f"/api/v1/forecast/{job.id}/realized/candidates", headers=make_auth_headers(test_user)
+        )
+        assert res.status_code == 200
+        assert res.json()["candidates"] == []

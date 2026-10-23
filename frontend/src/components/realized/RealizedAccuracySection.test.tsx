@@ -6,7 +6,11 @@ import { describe, expect, it, vi } from "vitest";
 import { RealizedAccuracySection } from "./RealizedAccuracySection";
 import { server } from "@/test/server";
 import { renderWithProviders } from "@/test/renderWithProviders";
-import { mockRealizedAwaiting, mockRealizedComplete } from "@/test/handlers";
+import {
+  mockRealizedAwaitingMetric,
+  mockRealizedMeasuredMetric,
+  mockRealizedScores,
+} from "@/test/handlers";
 import type { RealizedAccuracyResponse, RealizedMetric } from "@/types/api";
 
 // ECharts needs a real layout engine; the chart has its own coverage by eye.
@@ -16,8 +20,8 @@ vi.mock("./RealizedChart", () => ({
   ),
 }));
 
-const baseMetric = mockRealizedAwaiting.metrics[0] as RealizedMetric;
-const measured = mockRealizedComplete.metrics[0] as RealizedMetric;
+const baseMetric = mockRealizedAwaitingMetric;
+const measured   = mockRealizedMeasuredMetric;
 
 function respondWith(metric: RealizedMetric) {
   const body: RealizedAccuracyResponse = { job_id: "job-1", metrics: [metric] };
@@ -58,7 +62,7 @@ describe("RealizedAccuracySection", () => {
     respondWith({
       ...measured,
       status: "partial",
-      model: { ...measured.model!, matched_points: 4 },
+      model: { ...mockRealizedScores, matched_points: 4 },
     });
     renderSection();
     expect(await screen.findByText(/4 of 10 forecast dates measured/)).toBeInTheDocument();
@@ -67,7 +71,7 @@ describe("RealizedAccuracySection", () => {
   it("shows the model and the adjusted forecast side by side when there are edits", async () => {
     respondWith({
       ...measured,
-      adjusted: { ...measured.model!, wmape: 0.02, bias: 0.02 },
+      adjusted: { ...mockRealizedScores, wmape: 0.02, bias: 0.02 },
     });
     renderSection();
 
@@ -91,7 +95,7 @@ describe("RealizedAccuracySection", () => {
   it("never turns a missing percentage into 0%", async () => {
     respondWith({
       ...measured,
-      model: { ...measured.model!, wmape: null, bias: null },
+      model: { ...mockRealizedScores, wmape: null, bias: null },
     });
     renderSection();
     expect(await screen.findByText(/Every actual was zero/)).toBeInTheDocument();
@@ -99,19 +103,40 @@ describe("RealizedAccuracySection", () => {
   });
 
   it("renders nothing for a metric the response doesn't list", async () => {
+    // The component also renders nothing while loading, so first wait until the
+    // response has been served and the query has settled.
+    let served = false;
     server.use(
-      http.get("*/api/v1/forecast/job-1/realized", () =>
-        HttpResponse.json({ job_id: "job-1", metrics: [] }),
-      ),
+      http.get("*/api/v1/forecast/job-1/realized", () => {
+        served = true;
+        return HttpResponse.json({ job_id: "job-1", metrics: [] });
+      }),
     );
     const { container } = renderSection();
-    await waitFor(() => expect(container).toBeEmptyDOMElement());
+    await waitFor(() => expect(served).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(container).toBeEmptyDOMElement();
   });
 
   it("opens the picker from the check button", async () => {
     renderSection();
     await userEvent.click(await screen.findByRole("button", { name: "Check against newer data" }));
     expect(screen.getByRole("region", { name: "Check against newer data" })).toBeInTheDocument();
+  });
+
+  it("tells assistive tech whether the picker is open, and returns focus to the button when it closes", async () => {
+    renderSection();
+    const trigger = await screen.findByRole("button", { name: "Check against newer data" });
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    await userEvent.click(trigger);
+    expect(trigger).toHaveAttribute("aria-expanded", "true");
+    expect(trigger).toHaveAttribute("aria-controls", screen.getByRole("region", { name: "Check against newer data" }).id);
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("region", { name: "Check against newer data" })).not.toBeInTheDocument();
+    expect(trigger).toHaveAttribute("aria-expanded", "false");
+    expect(trigger).toHaveFocus();
   });
 
   it("degrades quietly when the realized request fails", async () => {

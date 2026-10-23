@@ -13,13 +13,15 @@ read from the stored actuals plus the live edit stack, so it cannot go stale.
 from __future__ import annotations
 
 import asyncio
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
 import structlog
 from fastapi import HTTPException, status
-from sqlalchemy import select
+from sqlalchemy import cast, func, literal, or_, select
+from sqlalchemy.dialects.postgresql import JSONB, JSONPATH, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.db_models import ForecastEdit, ForecastEvaluation, ForecastJob, Upload
@@ -37,8 +39,13 @@ from services.realized_accuracy import actual_series, compare, forecast_series, 
 
 logger = structlog.get_logger("forecasting.realized_accuracy")
 
-MAX_CANDIDATES      = 20
-_CANDIDATE_SCAN_CAP = 100   # uploads inspected before the Python-side column filter
+MAX_CANDIDATES = 20
+
+_UNIQUE_EVALUATION = "uq_forecast_evaluations_job_upload_sheet_metric"
+
+# Upload.columns is {sheet: [column, ...]}; this matches a column name in any sheet.
+# The name travels as a jsonpath variable, never spliced into the path text.
+_COLUMN_PATH = "$.*[*] ? (@ == $col)"
 
 
 # ── Sheet pairing ─────────────────────────────────────────────────────
@@ -60,43 +67,63 @@ async def list_candidate_uploads(
     db: AsyncSession, job: ForecastJob, metric_names: set[str]
 ) -> list[Upload]:
     """The caller's uploads that could supply actuals: made after the job, not
-    the job's own input, and holding at least one of its metric columns.
-    `Upload.columns` is {sheet: [columns]}, so the column test runs here, not
-    in SQL; no file is read."""
+    the job's own input, and holding at least one of its metric columns. The
+    column test runs in SQL against the stored `Upload.columns`, so no file is
+    read and an older matching upload is never hidden by newer ones that don't
+    match."""
+    has_metric = or_(*[
+        func.jsonb_path_exists(
+            Upload.columns,
+            cast(_COLUMN_PATH, JSONPATH),
+            literal({"col": name}, JSONB),
+        )
+        for name in sorted(metric_names)
+    ])
     stmt = (
         select(Upload)
-        .where(Upload.user_id == job.user_id, Upload.created_at > job.created_at)
-        .order_by(Upload.created_at.desc())
-        .limit(_CANDIDATE_SCAN_CAP)
+        .where(
+            Upload.user_id == job.user_id,
+            Upload.created_at > job.created_at,
+            Upload.s3_key != job.s3_input_key,
+            has_metric,
+        )
+        .order_by(Upload.created_at.desc(), Upload.id.desc())
+        .limit(MAX_CANDIDATES)
     )
     own_upload_id = (job.config or {}).get("upload_id")
-    uploads = (await db.execute(stmt)).scalars().all()
-
-    candidates: list[Upload] = []
-    for upload in uploads:
-        if upload.id == own_upload_id or upload.s3_key == job.s3_input_key:
-            continue
-        columns = {c for cols in (upload.columns or {}).values() for c in cols}
-        if columns & metric_names:
-            candidates.append(upload)
-        if len(candidates) == MAX_CANDIDATES:
-            break
-    return candidates
+    if own_upload_id:
+        stmt = stmt.where(Upload.id != own_upload_id)
+    return list((await db.execute(stmt)).scalars().all())
 
 
 # ── Evaluate ──────────────────────────────────────────────────────────
 def _evaluate_sheets(
     results: dict, sheets: dict[str, pd.DataFrame]
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, str]], bool]:
     """Compare every paired (sheet, metric) of the job with the upload.
+
+    Returns (rows, skipped, metric_present). `skipped` lists job metrics that
+    could not be compared and why; `metric_present` says whether ANY of the
+    job's metric columns exists in ANY upload sheet, which is what separates
+    "wrong file" from "right file, sheets that don't pair".
     Sync pandas — run via asyncio.to_thread."""
     pairing = pair_sheets(list(results), list(sheets))
-    rows: list[dict[str, Any]] = []
+    rows: list[dict[str, Any]]    = []
+    skipped: list[dict[str, str]] = []
+    upload_columns = {c for df in sheets.values() for c in df.columns}
+    metric_present = False
 
-    for job_sheet, upload_sheet in pairing.items():
-        df = sheets[upload_sheet]
-        for metric_name, metric in results[job_sheet].get("metrics", {}).items():
+    for job_sheet, sheet in results.items():
+        for metric_name, metric in sheet.get("metrics", {}).items():
+            metric_present = metric_present or metric_name in upload_columns
+
+            upload_sheet = pairing.get(job_sheet)
+            if upload_sheet is None:
+                skipped.append({"sheet": job_sheet, "metric": metric_name, "reason": "sheet_unpaired"})
+                continue
+            df = sheets[upload_sheet]
             if metric_name not in df.columns:
+                skipped.append({"sheet": job_sheet, "metric": metric_name, "reason": "metric_missing"})
                 continue
 
             forecast = forecast_series(metric.get("records", []))
@@ -111,18 +138,29 @@ def _evaluate_sheets(
                 "actuals_last_date": observed.index.max().date() if len(observed) else None,
                 **outcome,
             })
-    return rows
+    return rows, skipped, metric_present
 
 
-async def evaluate_job(db: AsyncSession, job: ForecastJob, upload: Upload) -> int:
+async def evaluate_job(
+    db: AsyncSession, job: ForecastJob, upload: Upload, results: dict | None = None
+) -> dict:
     """Evaluate `job` against `upload` and upsert one row per (sheet, metric).
-    Returns the number of metrics evaluated. The caller commits.
+    Returns the job's results so the caller can reuse them rather than read
+    results.json a second time. The caller commits.
 
-    Raises HTTPException: 409 no results to measure, 503 storage unavailable,
-    422 if the upload holds none of the job's metrics (or can't be parsed)."""
-    results = await load_job_results(job)
+    Metrics whose sheet doesn't pair, or that the paired sheet lacks, are
+    left without a row: they stay `awaiting_actuals`, and the reason is logged.
+
+    Raises HTTPException: 409 results unavailable, 503 storage unavailable,
+    422 if none of the job's metric columns appear in the upload (or it
+    can't be parsed)."""
+    if results is None:
+        results = await load_job_results(job)
     if not results:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="This job has no results to measure")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The results for this job could not be loaded",
+        )
 
     try:
         content = await load_upload_bytes(upload.s3_key)
@@ -132,47 +170,58 @@ async def evaluate_job(db: AsyncSession, job: ForecastJob, upload: Upload) -> in
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Upload storage unavailable"
         )
 
-    def _work() -> list[dict[str, Any]]:
+    def _work() -> tuple[list[dict[str, Any]], list[dict[str, str]], bool]:
         return _evaluate_sheets(results, parse_file(content, upload.file_name))
 
-    rows = await asyncio.to_thread(_work)
-    if not rows:
+    rows, skipped, metric_present = await asyncio.to_thread(_work)
+    if not metric_present:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="This file has none of the forecast's metric columns",
         )
 
-    existing = (
-        await db.execute(
-            select(ForecastEvaluation).where(
-                ForecastEvaluation.job_id == job.id,
-                ForecastEvaluation.upload_id == upload.id,
-            )
+    if skipped:
+        logger.info(
+            "realized_metrics_skipped",
+            job_id=job.id, upload_id=upload.id, skipped=skipped,
         )
-    ).scalars().all()
-    by_key = {(e.sheet_name, e.metric_name): e for e in existing}
-    now    = datetime.now(timezone.utc)   # a re-check must outrank older evaluations
 
-    for row in rows:
-        evaluation = by_key.get((row["sheet_name"], row["metric_name"]))
-        if evaluation is None:
-            evaluation = ForecastEvaluation(
-                job_id=job.id, user_id=job.user_id, upload_id=upload.id,
-                sheet_name=row["sheet_name"], metric_name=row["metric_name"],
-            )
-            db.add(evaluation)
-        evaluation.upload_file_name = upload.file_name
-        evaluation.forecast_points  = row["forecast_points"]
-        evaluation.matched_points   = row["matched_points"]
-        evaluation.wmape            = row["wmape"]
-        evaluation.mae              = row["mae"]
-        evaluation.bias             = row["bias"]
-        evaluation.actual_total     = row["actual_total"]
-        evaluation.forecast_total   = row["forecast_total"]
-        evaluation.actuals_last_date = row["actuals_last_date"]
-        evaluation.points           = row["points"]
-        evaluation.created_at       = now
-    await db.flush()
+    if rows:
+        # One atomic upsert: two simultaneous checks of the same upload cannot
+        # both insert and trip the unique constraint. created_at is rewritten
+        # on every check so it means "last evaluated", which is what makes a
+        # re-check outrank older evaluations of the same metric.
+        now  = datetime.now(timezone.utc)
+        stmt = insert(ForecastEvaluation).values([
+            {
+                "id"               : str(uuid.uuid4()),
+                "job_id"           : job.id,
+                "user_id"          : job.user_id,
+                "upload_id"        : upload.id,
+                "upload_file_name" : upload.file_name,
+                "sheet_name"       : row["sheet_name"],
+                "metric_name"      : row["metric_name"],
+                "forecast_points"  : row["forecast_points"],
+                "matched_points"   : row["matched_points"],
+                "wmape"            : row["wmape"],
+                "mae"              : row["mae"],
+                "bias"             : row["bias"],
+                "actual_total"     : row["actual_total"],
+                "forecast_total"   : row["forecast_total"],
+                "actuals_last_date": row["actuals_last_date"],
+                "points"           : row["points"],
+                "created_at"       : now,
+            }
+            for row in rows
+        ])
+        refreshed = (
+            "upload_file_name", "forecast_points", "matched_points", "wmape", "mae", "bias",
+            "actual_total", "forecast_total", "actuals_last_date", "points", "created_at",
+        )
+        await db.execute(stmt.on_conflict_do_update(
+            constraint=_UNIQUE_EVALUATION,
+            set_={col: getattr(stmt.excluded, col) for col in refreshed},
+        ))
 
     logger.info(
         "realized_accuracy_evaluated",
@@ -181,7 +230,7 @@ async def evaluate_job(db: AsyncSession, job: ForecastJob, upload: Upload) -> in
         metrics        = len(rows),
         matched_points = sum(r["matched_points"] for r in rows),
     )
-    return len(rows)
+    return results
 
 
 # ── Read ──────────────────────────────────────────────────────────────
@@ -207,16 +256,23 @@ def _adjusted_view(
     return _scores(outcome), {p["date"]: p["forecast"] for p in outcome["points"]}
 
 
-async def build_realized_response(db: AsyncSession, job: ForecastJob) -> RealizedAccuracyResponse:
+async def build_realized_response(
+    db: AsyncSession, job: ForecastJob, results: dict | None = None
+) -> RealizedAccuracyResponse:
     """One entry per (sheet, metric) in the job's results: the newest
-    evaluation, or `awaiting_actuals` with the dates the forecast needs."""
-    results = await load_job_results(job) or {}
+    evaluation, or `awaiting_actuals` with the dates the forecast needs.
+    Pass `results` when the caller already loaded them."""
+    if results is None:
+        results = await load_job_results(job) or {}
 
     evaluations = (
         await db.execute(
             select(ForecastEvaluation)
             .where(ForecastEvaluation.job_id == job.id)
-            .order_by(ForecastEvaluation.created_at.desc())
+            .order_by(ForecastEvaluation.created_at.desc(), ForecastEvaluation.id.desc())
+            # The upsert above is a Core statement, so instances this session
+            # already holds can be stale; always take the stored values.
+            .execution_options(populate_existing=True)
         )
     ).scalars().all()
     newest: dict[tuple[str, str], ForecastEvaluation] = {}

@@ -22,15 +22,12 @@ export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardP
   const [records, setRecords] = useState<ForecastRecord[]>(metric.records);
   const queryClient = useQueryClient();
 
-  // An Action Center edit changes the "adjusted" forecast that realized
-  // accuracy replays on the server, so refetch it whenever the edits change.
-  const handleRecordsChange = useCallback(
-    (next: ForecastRecord[]) => {
-      setRecords(next);
-      void queryClient.invalidateQueries({ queryKey: realizedQueryKey(jobId) });
-    },
-    [queryClient, jobId],
-  );
+  // An applied or reverted edit changes the "adjusted" forecast that realized
+  // accuracy replays on the server. Only a real edit invalidates it: the
+  // Action Center also reports records on first load, when nothing changed.
+  const handleEditsChanged = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: realizedQueryKey(jobId) });
+  }, [queryClient, jobId]);
 
   return (
     <Card className="tick-corners">
@@ -73,7 +70,8 @@ export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardP
               jobId={jobId}
               sheetName={sheetName}
               metricName={metric.metric_name}
-              onRecordsChange={handleRecordsChange}
+              onRecordsChange={setRecords}
+              onEditsChanged={handleEditsChanged}
             />
           )}
         </div>

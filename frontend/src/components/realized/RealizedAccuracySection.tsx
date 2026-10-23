@@ -1,7 +1,7 @@
-import { useId, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { MetricStat } from "@/components/ui/MetricStat";
 import { Button } from "@/components/ui/Button";
-import { CheckActualsDialog } from "@/components/realized/CheckActualsDialog";
+import { CheckActualsPanel } from "@/components/realized/CheckActualsPanel";
 import { RealizedChart } from "@/components/realized/RealizedChart";
 import { useRealizedAccuracy } from "@/hooks/useRealizedAccuracy";
 import {
@@ -94,6 +94,12 @@ export function RealizedAccuracySection({
   const { data, isError } = useRealizedAccuracy(jobId);
   const [isOpen, setIsOpen] = useState(false);
   const panelId = useId();
+  const triggerRef = useRef<HTMLButtonElement>(null);
+
+  const closePanel = () => {
+    setIsOpen(false);
+    triggerRef.current?.focus();
+  };
 
   const metric = data?.metrics.find(
     (m) => m.sheet_name === sheetName && m.metric_name === metricName,
@@ -128,26 +134,29 @@ export function RealizedAccuracySection({
       )}
       {hasScores && <Measured metric={metric} />}
 
-      {isOpen ? (
-        <CheckActualsDialog
+      <div>
+        <Button
+          ref={triggerRef}
+          variant="secondary"
+          size="sm"
+          aria-expanded={isOpen}
+          aria-controls={isOpen ? panelId : undefined}
+          onClick={() => (isOpen ? closePanel() : setIsOpen(true))}
+        >
+          {metric.status === "awaiting_actuals"
+            ? "Check against newer data"
+            : "Check against another file"}
+        </Button>
+      </div>
+
+      {isOpen && (
+        <CheckActualsPanel
           jobId={jobId}
           forecastStart={metric.forecast_start}
           forecastEnd={metric.forecast_end}
           panelId={panelId}
-          onClose={() => setIsOpen(false)}
+          onClose={closePanel}
         />
-      ) : (
-        <div>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => setIsOpen(true)}
-          >
-            {metric.status === "awaiting_actuals"
-              ? "Check against newer data"
-              : "Check against another file"}
-          </Button>
-        </div>
       )}
     </div>
   );
