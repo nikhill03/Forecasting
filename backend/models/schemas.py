@@ -474,6 +474,63 @@ class QAResponse(BaseModel):
 
 
 # ══════════════════════════════════════════════════════════════════
+# REALIZED ACCURACY SCHEMAS (F17)
+# Always separate from the backtest numbers on MetricResult — a forecast
+# checked against what actually happened is a different claim.
+# ══════════════════════════════════════════════════════════════════
+
+class EvaluateRealizedRequest(BaseModel):
+    upload_id: str
+
+
+class RealizedScores(BaseModel):
+    wmape          : Optional[float] = None    # null when every actual was zero
+    mae            : Optional[float] = None
+    bias           : Optional[float] = None    # positive = over-forecast
+    matched_points : int
+    actual_total   : float
+    forecast_total : float
+
+
+class RealizedPoint(BaseModel):
+    date              : str
+    actual            : float
+    forecast          : float
+    adjusted_forecast : Optional[float] = None
+
+
+class RealizedMetric(BaseModel):
+    sheet_name        : str
+    metric_name       : str
+    forecast_start    : Optional[str] = None
+    forecast_end      : Optional[str] = None
+    forecast_points   : int
+    status            : Literal["awaiting_actuals", "no_overlap", "partial", "complete"]
+    model             : Optional[RealizedScores] = None
+    adjusted          : Optional[RealizedScores] = None
+    points            : List[RealizedPoint] = Field(default_factory=list)
+    actuals_last_date : Optional[str] = None
+    evaluated_at      : Optional[datetime] = None
+    upload_id         : Optional[str] = None
+    upload_file_name  : Optional[str] = None
+
+
+class RealizedAccuracyResponse(BaseModel):
+    job_id  : str
+    metrics : List[RealizedMetric]
+
+
+class RealizedCandidate(BaseModel):
+    upload_id  : str
+    file_name  : str
+    created_at : datetime
+
+
+class RealizedCandidatesResponse(BaseModel):
+    candidates: List[RealizedCandidate]
+
+
+# ══════════════════════════════════════════════════════════════════
 # GENERIC RESPONSE WRAPPERS
 # ══════════════════════════════════════════════════════════════════
 
