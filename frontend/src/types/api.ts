@@ -9,6 +9,7 @@ import type {
   DemandMixSchema,
   DemandProfileSchema,
   DemandTypeSchema,
+  EvaluateRealizedRequestSchema,
   ErrorResponseSchema,
   ExplanationResponseSchema,
   ForecastEditSummarySchema,
@@ -24,6 +25,13 @@ import type {
   ModelWinSchema,
   ProgressResponseSchema,
   QAResponseSchema,
+  RealizedAccuracyResponseSchema,
+  RealizedCandidateSchema,
+  RealizedCandidatesResponseSchema,
+  RealizedMetricSchema,
+  RealizedPointSchema,
+  RealizedScoresSchema,
+  RealizedStatusSchema,
   QualityIssueCodeSchema,
   QualityIssueSchema,
   QualityReportRequestSchema,
@@ -100,6 +108,21 @@ export type ActiveRun = z.infer<typeof ActiveRunSchema>;
 export type RunDuration = z.infer<typeof RunDurationSchema>;
 export type ModelWin = z.infer<typeof ModelWinSchema>;
 export type DashboardSummary = z.infer<typeof DashboardSummarySchema>;
+
+export type RealizedStatus = z.infer<typeof RealizedStatusSchema>;
+export type RealizedScores = z.infer<typeof RealizedScoresSchema>;
+export type RealizedPoint = z.infer<typeof RealizedPointSchema>;
+export type RealizedMetric = z.infer<typeof RealizedMetricSchema>;
+export type RealizedAccuracyResponse = z.infer<
+  typeof RealizedAccuracyResponseSchema
+>;
+export type EvaluateRealizedRequest = z.infer<
+  typeof EvaluateRealizedRequestSchema
+>;
+export type RealizedCandidate = z.infer<typeof RealizedCandidateSchema>;
+export type RealizedCandidatesResponse = z.infer<
+  typeof RealizedCandidatesResponseSchema
+>;
 
 export type SuccessResponse = z.infer<typeof SuccessResponseSchema>;
 export type ErrorResponse = z.infer<typeof ErrorResponseSchema>;

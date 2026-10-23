@@ -23,7 +23,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 from sqlalchemy import event
 
-from backend.models.db_models import ForecastJob, ModelRun
+from backend.models.db_models import ForecastEvaluation, ForecastJob, ModelRun
 from backend.services.dashboard import (
     ACTIVE_RUNS_LIMIT,
     RECENT_RUNS_LIMIT,
@@ -87,6 +87,32 @@ async def _run(
     db.add(run)
     await db.flush()
     return run
+
+
+async def _evaluation(
+    db, job, *, wmape=0.2, matched=10, minute=0, sheet="Sheet1", metric="Sales",
+    upload_id=None, user_id=None,
+):
+    """A realized-accuracy row. `minute` orders evaluations of one metric."""
+    row = ForecastEvaluation(
+        id=str(uuid.uuid4()),
+        job_id=job.id,
+        user_id=user_id or job.user_id,
+        upload_id=upload_id,
+        upload_file_name="actuals.csv",
+        sheet_name=sheet,
+        metric_name=metric,
+        forecast_points=10,
+        matched_points=matched,
+        wmape=wmape,
+        actual_total=0.0,
+        forecast_total=0.0,
+        points=[],
+        created_at=_at(minute),
+    )
+    db.add(row)
+    await db.flush()
+    return row
 
 
 @contextmanager
@@ -500,6 +526,77 @@ class TestModelWins:
         assert [w.model_name for w in s.model_wins] == ["A", "B", "C"]
 
 
+class TestRealizedHeadline:
+    """F17: realized_wmape is its own number, never blended with median_wmape."""
+
+    async def test_no_evaluations_means_no_headline(self, db_session, test_user):
+        job = await _job(db_session, test_user.id, minute=1)
+        await _run(db_session, job.id, wmape=0.1)
+        s = await build_dashboard_summary(db_session, test_user.id)
+        assert s.realized_wmape is None
+        assert s.realized_runs == 0
+
+    async def test_realized_is_separate_from_backtest(self, db_session, test_user):
+        job = await _job(db_session, test_user.id, minute=1)
+        await _run(db_session, job.id, wmape=0.1)
+        await _evaluation(db_session, job, wmape=0.4)
+        s = await build_dashboard_summary(db_session, test_user.id)
+        assert s.median_wmape   == pytest.approx(0.1)
+        assert s.realized_wmape == pytest.approx(0.4)
+        assert s.realized_runs  == 1
+
+    async def test_median_across_runs(self, db_session, test_user):
+        for i, wmape in enumerate([0.1, 0.3, 0.9]):
+            job = await _job(db_session, test_user.id, minute=i)
+            await _evaluation(db_session, job, wmape=wmape)
+        s = await build_dashboard_summary(db_session, test_user.id)
+        assert s.realized_wmape == pytest.approx(0.3)
+        assert s.realized_runs  == 3
+
+    async def test_a_run_counts_once_with_the_median_of_its_metrics(self, db_session, test_user):
+        job = await _job(db_session, test_user.id, minute=1)
+        for metric, wmape in [("A", 0.1), ("B", 0.3), ("C", 0.5)]:
+            await _evaluation(db_session, job, wmape=wmape, metric=metric)
+        s = await build_dashboard_summary(db_session, test_user.id)
+        assert s.realized_wmape == pytest.approx(0.3)
+        assert s.realized_runs  == 1
+
+    async def test_only_the_newest_evaluation_of_a_metric_counts(self, db_session, test_user):
+        job = await _job(db_session, test_user.id, minute=1)
+        await _evaluation(db_session, job, wmape=0.9, minute=10)
+        await _evaluation(db_session, job, wmape=0.2, minute=20)
+        s = await build_dashboard_summary(db_session, test_user.id)
+        assert s.realized_wmape == pytest.approx(0.2)
+
+    async def test_a_newer_no_overlap_check_removes_the_run_from_the_headline(
+        self, db_session, test_user
+    ):
+        job = await _job(db_session, test_user.id, minute=1)
+        await _evaluation(db_session, job, wmape=0.2, minute=10)
+        await _evaluation(db_session, job, wmape=None, matched=0, minute=20)
+        s = await build_dashboard_summary(db_session, test_user.id)
+        assert s.realized_wmape is None
+        assert s.realized_runs  == 0
+
+    async def test_null_wmape_is_not_a_zero(self, db_session, test_user):
+        job = await _job(db_session, test_user.id, minute=1)
+        await _evaluation(db_session, job, wmape=None, matched=5)   # every actual was zero
+        s = await build_dashboard_summary(db_session, test_user.id)
+        assert s.realized_wmape is None
+        assert s.realized_runs  == 0
+
+    async def test_other_users_evaluations_are_excluded(
+        self, db_session, test_user, second_user
+    ):
+        mine   = await _job(db_session, test_user.id, minute=1)
+        theirs = await _job(db_session, second_user.id, minute=2)
+        await _evaluation(db_session, mine,   wmape=0.2)
+        await _evaluation(db_session, theirs, wmape=0.8)
+        s = await build_dashboard_summary(db_session, test_user.id)
+        assert s.realized_wmape == pytest.approx(0.2)
+        assert s.realized_runs  == 1
+
+
 class TestNoNPlusOne:
 
     async def test_statement_count_does_not_grow_with_runs(
@@ -523,4 +620,4 @@ class TestNoNPlusOne:
             await build_dashboard_summary(db_session, large.id)
 
         assert small_count["n"] == large_count["n"]
-        assert large_count["n"] == 8
+        assert large_count["n"] == 9

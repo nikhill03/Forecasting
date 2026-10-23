@@ -8,16 +8,17 @@ Tables:
   uploads       — one row per uploaded file
   forecast_jobs — one row per forecast run
   model_runs    — one row per metric per job
+  forecast_evaluations — realized-accuracy checks of a job against later actuals (F17)
 """
 
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    Boolean, DateTime, Float,
-    ForeignKey, Integer, String, Text,
+    Boolean, Date, DateTime, Float,
+    ForeignKey, Index, Integer, String, Text, UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -238,3 +239,61 @@ class ForecastEdit(Base):
             f"<ForecastEdit job={self.job_id} {self.sheet_name}/{self.metric_name} "
             f"#{self.sequence_no} {self.operation_type}>"
         )
+
+
+# ── forecast_evaluations ──────────────────────────────────────────────
+# F17 realized accuracy: one row per (job, upload, sheet, metric) checked
+# against actuals that arrived after the forecast. Kept apart from
+# model_runs on purpose — those rows are backtest scores and must never
+# carry realized numbers. The Action Center's adjusted forecast is NOT
+# stored here: it is replayed from `points` plus the live edit stack on
+# read, so it cannot go stale.
+class ForecastEvaluation(Base):
+    __tablename__ = "forecast_evaluations"
+    __table_args__ = (
+        UniqueConstraint(
+            "job_id", "upload_id", "sheet_name", "metric_name",
+            name="uq_forecast_evaluations_job_upload_sheet_metric",
+        ),
+        Index("ix_forecast_evaluations_user_created", "user_id", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False), primary_key=True, default=_uuid
+    )
+    job_id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("forecast_jobs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    upload_id: Mapped[str | None] = mapped_column(
+        UUID(as_uuid=False),
+        ForeignKey("uploads.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # Denormalised so the UI can still name the source after the upload is gone.
+    upload_file_name: Mapped[str] = mapped_column(String(500), nullable=False)
+    sheet_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    metric_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    forecast_points: Mapped[int] = mapped_column(Integer, nullable=False)
+    matched_points: Mapped[int] = mapped_column(Integer, nullable=False)
+    wmape: Mapped[float | None] = mapped_column(Float, nullable=True)
+    mae: Mapped[float | None] = mapped_column(Float, nullable=True)
+    bias: Mapped[float | None] = mapped_column(Float, nullable=True)
+    actual_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    forecast_total: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    actuals_last_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    # [{date, actual, forecast}] on matched dates; the horizon is capped at 365.
+    points: Mapped[list] = mapped_column(JSONB, nullable=False, default=list)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    def __repr__(self) -> str:
+        return f"<ForecastEvaluation job={self.job_id} metric={self.metric_name} matched={self.matched_points}>"

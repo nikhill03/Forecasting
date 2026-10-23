@@ -2,22 +2,22 @@ import ReactECharts from "echarts-for-react";
 import type { EChartsOption } from "echarts";
 import type { ForecastRecord } from "@/types/api";
 import { formatDate, formatNumber } from "@/lib/format";
+import {
+  COLOR_ACTUAL,
+  COLOR_AXIS_LINE,
+  COLOR_AXIS_TEXT,
+  COLOR_BOUNDARY,
+  COLOR_FORECAST,
+  COLOR_LEGEND,
+  COLOR_TEST_ACTUAL,
+  COLOR_TEST_PREDICTION,
+  COLOR_TEXT,
+  COLOR_TOOLTIP_BG,
+} from "@/components/charts/chartColors";
 
 interface ForecastChartProps {
   records: ForecastRecord[];
 }
-
-const COLOR_AXIS_LINE  = "#252D48";
-const COLOR_AXIS_TEXT  = "#616B93";
-const COLOR_LEGEND     = "#99A2C4";
-const COLOR_TOOLTIP_BG = "#1B2238";
-const COLOR_TEXT       = "#EEF0F7";
-const COLOR_BOUNDARY   = "#39456B";
-
-const COLOR_ACTUAL          = "#99A2C4";
-const COLOR_TEST_ACTUAL     = "#7C9CF2";
-const COLOR_TEST_PREDICTION = "#F5C451";
-const COLOR_FORECAST        = "#E8A23D";
 
 export function ForecastChart({ records }: ForecastChartProps) {
   const lastActualIndex = records.findIndex(

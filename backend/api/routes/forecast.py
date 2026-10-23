@@ -10,6 +10,9 @@ Endpoints:
     GET  /api/v1/forecast/{job_id}     — get job status + results
     GET  /api/v1/forecast/{job_id}/progress — lightweight progress poll
     DELETE /api/v1/forecast/{job_id}   — stop a running job
+    GET  /api/v1/forecast/{job_id}/realized            — forecast vs later actuals (F17)
+    GET  /api/v1/forecast/{job_id}/realized/candidates — uploads that could supply actuals
+    POST /api/v1/forecast/{job_id}/realized            — check a job against an upload
     Phase 2: jobs submitted to Celery, status tracked in PostgreSQL.
 """
 from __future__ import annotations
@@ -40,6 +43,7 @@ from backend.models.db_models import ForecastEdit, ForecastJob, ModelRun, Upload
 from backend.models.schemas import (
     ActionCenterState,
     ApplyActionRequest,
+    EvaluateRealizedRequest,
     ExplanationResponse,
     ForecastEditSummary,
     ForecastJobListResponse,
@@ -50,6 +54,9 @@ from backend.models.schemas import (
     ProgressResponse,
     QARequest,
     QAResponse,
+    RealizedAccuracyResponse,
+    RealizedCandidate,
+    RealizedCandidatesResponse,
     RenameJobRequest,
     RevertActionRequest,
     SuccessResponse,
@@ -62,7 +69,13 @@ from backend.services.forecast_edits import (
     parse_operation,
     replay_edits,
 )
+from backend.services.job_results import load_job_results, read_json_file
 from backend.services.llm_client import LLMClientError, chat_completion
+from backend.services.realized_accuracy import (
+    build_realized_response,
+    evaluate_job,
+    list_candidate_uploads,
+)
 
 router = APIRouter(prefix="/forecast", tags=["forecast"])
 logger = structlog.get_logger("forecasting.forecast")
@@ -98,52 +111,6 @@ def _get_redis_client():
     return _redis_client
 
 
-def _normalize_results(results: dict | None) -> dict | None:
-    """Normalize processing_engine output format to API schema format."""
-    if not results:
-        return results
-    normalized = {}
-    for sheet_name, sheet_data in results.items():
-        if isinstance(sheet_data, dict) and "metrics" in sheet_data:
-            # Already has metrics key — just add sheet_name and fix metric_name fields
-            normalized[sheet_name] = {
-                "sheet_name": sheet_name,
-                "metrics": {
-                    metric_name: {
-                        "metric_name": metric_name,
-                        **{k: v for k, v in metric_data.items() if k != "records"},
-                        "records": metric_data.get("records", []),
-                    }
-                    for metric_name, metric_data in sheet_data["metrics"].items()
-                    if isinstance(metric_data, dict)
-                },
-            }
-        elif isinstance(sheet_data, dict):
-            normalized[sheet_name] = {
-                "sheet_name": sheet_name,
-                "metrics": {
-                    metric_name: {
-                        "metric_name": metric_name,
-                        **{k: v for k, v in metric_data.items() if k != "records"},
-                        "records": metric_data.get("records", []),
-                    }
-                    for metric_name, metric_data in sheet_data.items()
-                    if isinstance(metric_data, dict)
-                },
-            }
-        else:
-            normalized[sheet_name] = sheet_data
-    return normalized
-
-
-def _read_json_file(path: str) -> dict | None:
-    """Sync helper — run via asyncio.to_thread so callers don't block the event loop."""
-    if not os.path.exists(path):
-        return None
-    with open(path) as f:
-        return json.load(f)
-
-
 async def _read_live_progress(job_id: str) -> dict | None:
     """Reads the per-job progress.json that services/processing_engine.py's
     _emit_status() writes stage-by-stage (job-scoped path — safe under
@@ -152,53 +119,17 @@ async def _read_live_progress(job_id: str) -> dict | None:
     in that case, never raise."""
     path = os.path.join("outputs", "predictions", job_id, "progress.json")
     try:
-        return await asyncio.to_thread(_read_json_file, path)
+        return await asyncio.to_thread(read_json_file, path)
     except (OSError, json.JSONDecodeError) as exc:
         logger.warning("job_live_progress_load_failed", job_id=job_id, error=str(exc))
         return None
-
-
-async def _load_job_results(job: ForecastJob) -> dict | None:
-    """Loads and normalizes a completed job's results.json from wherever
-    s3_output_key points (job-scoped local file or S3) — shared by
-    _job_to_response and the AI Action Center's baseline-record loader."""
-    if job.status != "success":
-        return None
-
-    if job.s3_output_key and job.s3_output_key.startswith("local:"):
-        path = job.s3_output_key.replace("local:", "")
-        try:
-            raw = await asyncio.to_thread(_read_json_file, path)
-        except (OSError, json.JSONDecodeError) as exc:
-            logger.warning("job_results_load_failed", job_id=job.id, error=str(exc))
-            return None
-        return _normalize_results(raw) if raw is not None else None
-
-    if job.s3_output_key:
-        try:
-            from backend.storage.s3_client import download_json
-            raw = await download_json(job.s3_output_key)
-            return _normalize_results(raw)
-        except Exception as exc:
-            logger.warning("job_results_load_failed", job_id=job.id, error=str(exc))
-            return None
-
-    # No job-scoped storage location recorded. The only remaining source
-    # would be the single global outputs/predictions/predictions_all.json
-    # file shared by every job on the box (the F5 "concurrent jobs
-    # overwrite each other" defect) — reading it here would leak another
-    # tenant's forecast output through this job's own, correctly-authorized
-    # job_id. Return no results rather than risk a cross-tenant data leak;
-    # F5 (job-scoped artifacts) is what makes this branch safe to populate
-    # again.
-    return None
 
 
 async def _load_metric(job: ForecastJob, sheet_name: str, metric_name: str) -> dict:
     """Loads one metric's full result dict (stats + baseline records). Raises
     404 if the job has no results yet, or the sheet/metric doesn't exist —
     matches the ownership-scoped 404 convention used throughout this file."""
-    results = await _load_job_results(job)
+    results = await load_job_results(job)
     if not results:
         raise HTTPException(status_code=404, detail="No results available for this job")
 
@@ -259,7 +190,7 @@ def _edit_to_summary(edit: ForecastEdit) -> ForecastEditSummary:
 
 async def _job_to_response(job: ForecastJob) -> ForecastJobResponse:
     """Convert ORM object to response schema."""
-    results = await _load_job_results(job)
+    results = await load_job_results(job)
 
     return ForecastJobResponse(
         job_id=job.id,
@@ -927,3 +858,71 @@ async def export_csv(
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Realized accuracy (F17) ───────────────────────────────────────────
+@router.get("/{job_id}/realized", response_model=RealizedAccuracyResponse)
+async def get_realized_accuracy(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> RealizedAccuracyResponse:
+    """How the forecast held up against later actuals, per (sheet, metric).
+    Realized numbers only — the backtest scores stay on the job's results."""
+    parse_uuid_or_404(job_id, "Job")
+    job = await _get_owned_job(job_id, user_id, db)
+    return await build_realized_response(db, job)
+
+
+@router.get("/{job_id}/realized/candidates", response_model=RealizedCandidatesResponse)
+async def list_realized_candidates(
+    job_id: str,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> RealizedCandidatesResponse:
+    """The caller's later uploads that contain one of this job's metrics."""
+    parse_uuid_or_404(job_id, "Job")
+    job     = await _get_owned_job(job_id, user_id, db)
+    results = await load_job_results(job) or {}
+    metric_names = {m for sheet in results.values() for m in sheet.get("metrics", {})}
+    uploads = await list_candidate_uploads(db, job, metric_names) if metric_names else []
+    return RealizedCandidatesResponse(
+        candidates=[
+            RealizedCandidate(upload_id=u.id, file_name=u.file_name, created_at=u.created_at)
+            for u in uploads
+        ]
+    )
+
+
+@router.post("/{job_id}/realized", response_model=RealizedAccuracyResponse)
+async def evaluate_realized_accuracy(
+    job_id: str,
+    request: EvaluateRealizedRequest,
+    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id),
+) -> RealizedAccuracyResponse:
+    """Check a finished job's forecast against an upload of newer data.
+    Re-checking with the same upload replaces its stored evaluation."""
+    parse_uuid_or_404(job_id, "Job")
+    parse_uuid_or_404(request.upload_id, "Upload")
+    job = await _get_owned_job(job_id, user_id, db)
+    if job.status != "success":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Only a completed forecast can be checked against actuals",
+        )
+
+    upload = (
+        await db.execute(
+            select(Upload).where(Upload.id == request.upload_id, Upload.user_id == user_id)
+        )
+    ).scalar_one_or_none()
+    if not upload:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Upload '{request.upload_id}' not found",
+        )
+
+    results = await evaluate_job(db, job, upload)
+    await db.commit()
+    return await build_realized_response(db, job, results)

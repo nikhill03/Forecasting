@@ -3,6 +3,9 @@ import type {
   ActiveRun,
   DashboardSummary,
   DataQualityReport,
+  RealizedAccuracyResponse,
+  RealizedMetric,
+  RealizedScores,
   SeriesQuality,
   SampleDataset,
   TokenResponse,
@@ -85,6 +88,8 @@ export const emptyDashboardSummary: DashboardSummary = {
   median_run_seconds: null,
   slowest_runs: [],
   model_wins: [],
+  realized_wmape: null,
+  realized_runs: 0,
 };
 
 // Not in mockDashboardSummary by default: an active run makes its row poll
@@ -166,6 +171,63 @@ export const mockDashboardSummary: DashboardSummary = {
     { model_name: "Ensemble[Huber+Ridge]", wins: 1 },
     { model_name: "Theta", wins: 1 },
   ],
+  realized_wmape: 0.124,
+  realized_runs: 3,
+};
+
+// ── realized accuracy (F17) ──────────────────────────────────────────
+
+// A finished job nobody has checked against newer data yet. This is the
+// default for GET /forecast/:id/realized, so every results-page test sees the
+// honest "awaiting actuals" state unless it opts into something else.
+export const mockRealizedAwaitingMetric: RealizedMetric = {
+  sheet_name: "Sheet1",
+  metric_name: "units_sold",
+  forecast_start: "2025-01-01",
+  forecast_end: "2025-01-10",
+  forecast_points: 10,
+  status: "awaiting_actuals",
+  model: null,
+  adjusted: null,
+  points: [],
+  actuals_last_date: null,
+  evaluated_at: null,
+  upload_id: null,
+  upload_file_name: null,
+};
+
+export const mockRealizedAwaiting: RealizedAccuracyResponse = {
+  job_id: "job-1",
+  metrics: [mockRealizedAwaitingMetric],
+};
+
+export const mockRealizedScores: RealizedScores = {
+  wmape: 0.0909,
+  mae: 10,
+  bias: -0.0909,
+  matched_points: 10,
+  actual_total: 1100,
+  forecast_total: 1000,
+};
+
+export const mockRealizedMeasuredMetric: RealizedMetric = {
+  ...mockRealizedAwaitingMetric,
+  status: "complete",
+  model: mockRealizedScores,
+  adjusted: null,
+  points: [
+    { date: "2025-01-01", actual: 110, forecast: 100, adjusted_forecast: null },
+    { date: "2025-01-02", actual: 110, forecast: 100, adjusted_forecast: null },
+  ],
+  actuals_last_date: "2025-01-10",
+  evaluated_at: "2025-02-01T09:00:00Z",
+  upload_id: "upload-actuals",
+  upload_file_name: "january-actuals.csv",
+};
+
+export const mockRealizedComplete: RealizedAccuracyResponse = {
+  job_id: "job-1",
+  metrics: [mockRealizedMeasuredMetric],
 };
 
 // ── data quality (F16) ───────────────────────────────────────────────
@@ -252,6 +314,12 @@ export const handlers = [
   ),
   http.post("*/api/v1/upload/sample/:sampleId", () =>
     HttpResponse.json(mockSampleUpload, { status: 201 }),
+  ),
+  http.get("*/api/v1/forecast/:jobId/realized/candidates", () =>
+    HttpResponse.json({ candidates: [] }),
+  ),
+  http.get("*/api/v1/forecast/:jobId/realized", () =>
+    HttpResponse.json(mockRealizedAwaiting),
   ),
   http.get("*/api/v1/dashboard", () =>
     HttpResponse.json(emptyDashboardSummary),

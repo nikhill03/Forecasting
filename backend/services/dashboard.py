@@ -9,7 +9,7 @@ Two rules hold for every query here:
   * Champion rows only. Since F14, model_runs holds one row per model *tried*
     (~14 per run). Without `is_champion` every aggregate would count each run
     many times over.
-  * A fixed number of statements, however many jobs the user has. No query is
+  * A fixed number of statements (nine), however many jobs the user has. No query is
     issued per job; backend/tests/test_dashboard.py asserts the count.
 
 The arithmetic lives in small pure functions so the metric definitions can be
@@ -26,7 +26,7 @@ from typing import Iterable, Optional
 from sqlalchemy import String, cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.db_models import ForecastJob, ModelRun
+from backend.models.db_models import ForecastEvaluation, ForecastJob, ModelRun
 from backend.models.schemas import (
     ActiveRun,
     DashboardSummary,
@@ -280,6 +280,33 @@ async def build_dashboard_summary(db: AsyncSession, user_id: str) -> DashboardSu
         key=lambda w: (-w.wins, w.model_name),
     )
 
+    # 9 ─ realized accuracy (F17): the newest evaluation of each (job, sheet,
+    #     metric), taken in SQL so the statement count stays fixed. An
+    #     evaluation with no matched dates carries no score and is skipped —
+    #     but it still shadows older ones, as it does on the results page.
+    evaluation_rows = (await db.execute(
+        select(
+            ForecastEvaluation.job_id, ForecastEvaluation.matched_points,
+            ForecastEvaluation.wmape,
+        )
+        .where(ForecastEvaluation.user_id == user_id)
+        .distinct(
+            ForecastEvaluation.job_id, ForecastEvaluation.sheet_name,
+            ForecastEvaluation.metric_name,
+        )
+        .order_by(
+            ForecastEvaluation.job_id, ForecastEvaluation.sheet_name,
+            ForecastEvaluation.metric_name,
+            ForecastEvaluation.created_at.desc(), ForecastEvaluation.id.desc(),
+        )
+    )).all()
+
+    realized_by_job: dict[str, list] = defaultdict(list)
+    for job_id, matched, wmape in evaluation_rows:
+        if matched > 0:
+            realized_by_job[job_id].append(wmape)
+    realized_wmapes = [per_run_wmape(w) for w in realized_by_job.values()]
+
     return DashboardSummary(
         total_runs=total,
         status_counts=status_counts,
@@ -293,4 +320,6 @@ async def build_dashboard_summary(db: AsyncSession, user_id: str) -> DashboardSu
         median_run_seconds=median_or_none(r.duration_seconds for r in timed_runs),
         slowest_runs=slowest_runs,
         model_wins=model_wins,
+        realized_wmape=median_or_none(realized_wmapes),
+        realized_runs=sum(1 for w in realized_wmapes if w is not None),
     )

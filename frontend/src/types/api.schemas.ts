@@ -401,6 +401,75 @@ export const DashboardSummarySchema = z.object({
   slowest_runs: z.array(RunDurationSchema),
   // Most wins first; ties by model name.
   model_wins: z.array(ModelWinSchema),
+  // Realized accuracy (F17): how far forecasts were from what actually
+  // happened. A different number from median_wmape, which is backtest — never
+  // average or combine the two.
+  realized_wmape: z.number().nullable(),
+  realized_runs: z.number(),
+});
+
+// ── realized accuracy (F17) ──────────────────────────────────────────
+
+export const RealizedStatusSchema = z.enum([
+  "awaiting_actuals",
+  "no_overlap",
+  "partial",
+  "complete",
+]);
+
+export const RealizedScoresSchema = z.object({
+  // Null when every actual was zero — a ratio against zero is not a score.
+  wmape: z.number().nullable(),
+  mae: z.number().nullable(),
+  // Positive = over-forecast.
+  bias: z.number().nullable(),
+  matched_points: z.number(),
+  actual_total: z.number(),
+  forecast_total: z.number(),
+});
+
+export const RealizedPointSchema = z.object({
+  date: z.string(),
+  actual: z.number(),
+  forecast: z.number(),
+  adjusted_forecast: z.number().nullable(),
+});
+
+export const RealizedMetricSchema = z.object({
+  sheet_name: z.string(),
+  metric_name: z.string(),
+  forecast_start: z.string().nullable(),
+  forecast_end: z.string().nullable(),
+  forecast_points: z.number(),
+  status: RealizedStatusSchema,
+  // The model's own forecast. Null unless partial or complete.
+  model: RealizedScoresSchema.nullable(),
+  // The forecast after the user's Action Center edits; null when none.
+  adjusted: RealizedScoresSchema.nullable(),
+  points: z.array(RealizedPointSchema),
+  actuals_last_date: z.string().nullable(),
+  evaluated_at: z.string().nullable(),
+  upload_id: z.string().nullable(),
+  upload_file_name: z.string().nullable(),
+});
+
+export const RealizedAccuracyResponseSchema = z.object({
+  job_id: z.string(),
+  metrics: z.array(RealizedMetricSchema),
+});
+
+export const EvaluateRealizedRequestSchema = z.object({
+  upload_id: z.string(),
+});
+
+export const RealizedCandidateSchema = z.object({
+  upload_id: z.string(),
+  file_name: z.string(),
+  created_at: z.string(),
+});
+
+export const RealizedCandidatesResponseSchema = z.object({
+  candidates: z.array(RealizedCandidateSchema),
 });
 
 // ── generic response wrappers ────────────────────────────────────────

@@ -24,4 +24,25 @@ describe("StatStrip", () => {
     expect(screen.queryByText("0.0%")).not.toBeInTheDocument();
     expect(screen.getAllByText("—")).toHaveLength(2);
   });
+
+  it("labels the backtest median and the realized figure so they can't be confused", () => {
+    render(<StatStrip summary={mockDashboardSummary} />);
+
+    expect(screen.getByText("Median WMAPE")).toBeInTheDocument();
+    expect(screen.getByText("Backtest")).toBeInTheDocument();
+    expect(screen.getByText("Realized WMAPE")).toBeInTheDocument();
+    expect(screen.getByText("12.4%")).toBeInTheDocument();
+    expect(screen.getByText("Against actuals, 3 runs")).toBeInTheDocument();
+  });
+
+  it("says nothing has been measured yet instead of showing a score", () => {
+    render(
+      <StatStrip
+        summary={{ ...mockDashboardSummary, realized_wmape: null, realized_runs: 0 }}
+      />,
+    );
+
+    expect(screen.getByText("Not measured yet")).toBeInTheDocument();
+    expect(screen.queryByText("12.4%")).not.toBeInTheDocument();
+  });
 });

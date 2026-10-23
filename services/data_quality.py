@@ -73,7 +73,7 @@ def _infer_frequency(index: pd.DatetimeIndex) -> str | None:
         return None
 
 
-def _prepare_sheet(df_raw: pd.DataFrame, date_col: str) -> tuple[pd.DataFrame, int]:
+def prepare_sheet(df_raw: pd.DataFrame, date_col: str) -> tuple[pd.DataFrame, int]:
     """Mirror processing_worker's per-sheet prep (processing_engine.py:~505):
     coerce dates, drop the unparseable rows, index and sort."""
     df = df_raw.copy()
@@ -83,7 +83,7 @@ def _prepare_sheet(df_raw: pd.DataFrame, date_col: str) -> tuple[pd.DataFrame, i
     return df, unparseable
 
 
-def _sanitize_with_counts(df: pd.DataFrame, metric: str) -> tuple[pd.Series, int, int]:
+def sanitize_with_counts(df: pd.DataFrame, metric: str) -> tuple[pd.Series, int, int]:
     """DataHandling.sanitize (data_handling.py:31-41), counting what each
     step removes. Returns (series, non_numeric_values, duplicate_timestamps).
     Unlike sanitize it never returns None — the report needs the counts
@@ -147,8 +147,8 @@ def profile_series(
         ))
         return profile
 
-    df, unparseable = _prepare_sheet(df_raw, date_col)
-    series, non_numeric, duplicates = _sanitize_with_counts(df, metric)
+    df, unparseable = prepare_sheet(df_raw, date_col)
+    series, non_numeric, duplicates = sanitize_with_counts(df, metric)
     values = series.dropna()
     usable = int(len(values))
     n      = int(len(series))   # the pipeline splits and caps on len(raw_series), NaNs included

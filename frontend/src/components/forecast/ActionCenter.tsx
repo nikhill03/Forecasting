@@ -11,6 +11,9 @@ interface ActionCenterProps {
   sheetName: string;
   metricName: string;
   onRecordsChange: (records: ForecastRecord[]) => void;
+  // Fired only after an edit is applied or reverted — not on the initial load,
+  // which also reports records through onRecordsChange.
+  onEditsChanged?: () => void;
 }
 
 export function ActionCenter({
@@ -18,6 +21,7 @@ export function ActionCenter({
   sheetName,
   metricName,
   onRecordsChange,
+  onEditsChanged,
 }: ActionCenterProps) {
   const queryClient = useQueryClient();
   const [instruction, setInstruction] = useState("");
@@ -45,6 +49,7 @@ export function ActionCenter({
       setInstruction("");
       queryClient.setQueryData(queryKey, result);
       onRecordsChange(result.records);
+      onEditsChanged?.();
     },
     onError: (err) => {
       setError(
@@ -61,6 +66,7 @@ export function ActionCenter({
       setError(null);
       queryClient.setQueryData(queryKey, result);
       onRecordsChange(result.records);
+      onEditsChanged?.();
     },
     onError: (err) => {
       setError(err instanceof ApiError ? err.message : "Couldn't revert.");
