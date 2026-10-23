@@ -1,11 +1,14 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { MetricStat } from "@/components/ui/MetricStat";
 import { DemandBadge } from "@/components/ui/DemandBadge";
 import { ForecastChart } from "@/components/charts/ForecastChart";
 import { ActionCenter } from "@/components/forecast/ActionCenter";
 import { ModelLeaderboard } from "@/components/forecast/ModelLeaderboard";
+import { RealizedAccuracySection } from "@/components/realized/RealizedAccuracySection";
 import { UnderstandabilitySection } from "@/components/forecast/UnderstandabilitySection";
+import { realizedQueryKey } from "@/hooks/useRealizedAccuracy";
 import { formatWmape, formatPercent, formatNumber } from "@/lib/format";
 import type { ForecastRecord, MetricResult } from "@/types/api";
 
@@ -17,6 +20,17 @@ interface MetricResultCardProps {
 
 export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardProps) {
   const [records, setRecords] = useState<ForecastRecord[]>(metric.records);
+  const queryClient = useQueryClient();
+
+  // An Action Center edit changes the "adjusted" forecast that realized
+  // accuracy replays on the server, so refetch it whenever the edits change.
+  const handleRecordsChange = useCallback(
+    (next: ForecastRecord[]) => {
+      setRecords(next);
+      void queryClient.invalidateQueries({ queryKey: realizedQueryKey(jobId) });
+    },
+    [queryClient, jobId],
+  );
 
   return (
     <Card className="tick-corners">
@@ -59,10 +73,18 @@ export function MetricResultCard({ metric, jobId, sheetName }: MetricResultCardP
               jobId={jobId}
               sheetName={sheetName}
               metricName={metric.metric_name}
-              onRecordsChange={setRecords}
+              onRecordsChange={handleRecordsChange}
             />
           )}
         </div>
+
+        {metric.metric_name && (
+          <RealizedAccuracySection
+            jobId={jobId}
+            sheetName={sheetName}
+            metricName={metric.metric_name}
+          />
+        )}
 
         <ModelLeaderboard models={metric.model_leaderboard} />
 

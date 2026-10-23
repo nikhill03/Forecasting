@@ -3,6 +3,7 @@ import { parseOrThrow } from "@/lib/validateResponse";
 import {
   ActionCenterStateSchema,
   ApplyActionRequestSchema,
+  EvaluateRealizedRequestSchema,
   ExplanationResponseSchema,
   ForecastJobListResponseSchema,
   ForecastJobResponseSchema,
@@ -10,6 +11,8 @@ import {
   ProgressResponseSchema,
   QARequestSchema,
   QAResponseSchema,
+  RealizedAccuracyResponseSchema,
+  RealizedCandidatesResponseSchema,
   RenameJobRequestSchema,
   RevertActionRequestSchema,
   SuccessResponseSchema,
@@ -22,6 +25,8 @@ import type {
   ForecastRequest,
   ProgressResponse,
   QAResponse,
+  RealizedAccuracyResponse,
+  RealizedCandidate,
   SuccessResponse,
 } from "@/types/api";
 
@@ -96,6 +101,50 @@ export const forecastService = {
       ForecastJobResponseSchema,
       data,
       "forecastService.getJob",
+    );
+  },
+
+  // Realized accuracy (F17): how a finished forecast compared with the values
+  // that actually arrived later. Backtest scores live on the job's results.
+  async getRealized(jobId: string): Promise<RealizedAccuracyResponse> {
+    const { data } = await apiClient.get(
+      `/forecast/${encodeURIComponent(jobId)}/realized`,
+    );
+    return parseOrThrow(
+      RealizedAccuracyResponseSchema,
+      data,
+      "forecastService.getRealized",
+    );
+  },
+
+  async getRealizedCandidates(jobId: string): Promise<RealizedCandidate[]> {
+    const { data } = await apiClient.get(
+      `/forecast/${encodeURIComponent(jobId)}/realized/candidates`,
+    );
+    return parseOrThrow(
+      RealizedCandidatesResponseSchema,
+      data,
+      "forecastService.getRealizedCandidates",
+    ).candidates;
+  },
+
+  async evaluateRealized(
+    jobId: string,
+    uploadId: string,
+  ): Promise<RealizedAccuracyResponse> {
+    const body = parseOrThrow(
+      EvaluateRealizedRequestSchema,
+      { upload_id: uploadId },
+      "forecastService.evaluateRealized:request",
+    );
+    const { data } = await apiClient.post(
+      `/forecast/${encodeURIComponent(jobId)}/realized`,
+      body,
+    );
+    return parseOrThrow(
+      RealizedAccuracyResponseSchema,
+      data,
+      "forecastService.evaluateRealized",
     );
   },
 

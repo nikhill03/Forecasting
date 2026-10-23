@@ -3,6 +3,7 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/test/server";
 import { forecastService } from "./forecastService";
 import { ApiError } from "./client";
+import { mockRealizedAwaiting, mockRealizedComplete } from "@/test/handlers";
 import type { ForecastRequest } from "@/types/api";
 
 const validForecastRequest: ForecastRequest = {
@@ -433,5 +434,50 @@ describe("forecastService.listJobs", () => {
     );
 
     await expect(forecastService.listJobs()).rejects.toThrow(ApiError);
+  });
+});
+
+describe("forecastService realized accuracy", () => {
+  it("getRealized returns the parsed state", async () => {
+    server.use(
+      http.get("*/api/v1/forecast/job-1/realized", () =>
+        HttpResponse.json(mockRealizedAwaiting),
+      ),
+    );
+    expect(await forecastService.getRealized("job-1")).toEqual(mockRealizedAwaiting);
+  });
+
+  it("getRealized rejects a status the schema doesn't know", async () => {
+    server.use(
+      http.get("*/api/v1/forecast/job-1/realized", () =>
+        HttpResponse.json({
+          ...mockRealizedAwaiting,
+          metrics: [{ ...mockRealizedAwaiting.metrics[0], status: "maybe" }],
+        }),
+      ),
+    );
+    await expect(forecastService.getRealized("job-1")).rejects.toBeInstanceOf(ApiError);
+  });
+
+  it("getRealizedCandidates unwraps the list", async () => {
+    const candidate = { upload_id: "u1", file_name: "a.csv", created_at: "2025-02-01T00:00:00Z" };
+    server.use(
+      http.get("*/api/v1/forecast/job-1/realized/candidates", () =>
+        HttpResponse.json({ candidates: [candidate] }),
+      ),
+    );
+    expect(await forecastService.getRealizedCandidates("job-1")).toEqual([candidate]);
+  });
+
+  it("evaluateRealized posts the upload id and returns the new state", async () => {
+    let body: unknown;
+    server.use(
+      http.post("*/api/v1/forecast/job-1/realized", async ({ request }) => {
+        body = await request.json();
+        return HttpResponse.json(mockRealizedComplete);
+      }),
+    );
+    expect(await forecastService.evaluateRealized("job-1", "u1")).toEqual(mockRealizedComplete);
+    expect(body).toEqual({ upload_id: "u1" });
   });
 });
